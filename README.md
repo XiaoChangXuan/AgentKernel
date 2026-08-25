@@ -32,6 +32,9 @@ DefaultAgentLoop
   ├── ContextManager
   │     ├── ContextProjector ──> Context Pages
   │     ├── ContextPolicy
+  │     ├── ContextPressure + ReclaimPolicy
+  │     ├── deterministic ToolResultPruner
+  │     ├── durable ContextCompactor
   │     └── budgeted Working Set ──> ModelRequest
   ├── LLMService / ScriptedLLM
   └── ToolRegistry
@@ -136,7 +139,7 @@ The Kernel generates `operation_id` separately from the model's `tool_call_id` a
 
 This is durable, recoverable side-effect execution—not a universal exactly-once guarantee. Effectively-once behavior is possible only when the external system honors stable idempotency or provides reliable reconciliation.
 
-## Context VM phase 1
+## Context VM
 
 V0.4 introduces deterministic working-set based context selection. The durable Session still answers “what happened”; Context VM answers “what should this model Step see now?”
 
@@ -170,7 +173,28 @@ The default policy pins the system prompt and current user input, favors current
 
 Eviction is not deletion. Original events and full Tool Results remain in Session. `request_page(page_id)` performs an explicit one-working-set page-in, while `pin()` and `unpin()` provide mechanism-level residency controls. If mandatory Pages and their dependencies exceed the input budget, selection raises `ContextBudgetExceeded` instead of silently dropping them.
 
-Phase 1 performs no summarization, pruning, semantic retrieval, RAG, or long-term memory. It does not provide infinite context.
+### V0.4 phase 2: context reclamation
+
+`ContextManager.prepare_working_set()` extends phase 1 with an ordered reclaim pipeline:
+
+```text
+full projection → working-set eviction → deterministic Tool Result pruning
+                → durable semantic compaction → rebuilt Working Set
+```
+
+`ContextPressure` derives `NORMAL`, `PRESSURED`, `CRITICAL`, or `OVERFLOW` from projected/selected token estimates, the input budget, and reserved output. A replaceable reclaim policy chooses mechanisms; the default prefers cheap deterministic eviction, then head/omission/tail pruning, and invokes the existing provider-neutral `LLMService` for compaction only at overflow.
+
+Pruning changes only the model-visible Tool Result Page and retains its source Page ID, original/retained cost, strategy, and error-rich tail. Compaction replaces an atomic-safe older Page range with one durable Summary Page while keeping a configurable recent tail verbatim. Every summary records its source event/Page identities, range, costs, fingerprint, timestamp, parent summary, and optional model/provider metadata. Completed summaries shadow their source Pages only in the model-visible projection; raw Session events and full Tool Results are never deleted or rewritten.
+
+The summary lifecycle (`requested → started → summary created → completed`) is append-only and replay-validated. Only a completed summary becomes visible after restart. Rolling compaction can replace a prior checkpoint plus newer old history with one successor checkpoint.
+
+This is bounded, lossy context reclamation—not infinite context, lossless summarization, perfect memory, RAG, or long-term memory. Token estimates also exclude Provider envelope and Tool Schema overhead, which callers must reserve.
+
+Run the offline 200-turn comparison:
+
+```bash
+python -m examples.context_reclamation_benchmark
+```
 
 ## Run against an OpenAI-compatible API
 
@@ -205,10 +229,10 @@ python -m pytest
 
 ## Current stage
 
-V0.4 phase 1 adds deterministic Context Page projection, configurable token estimation, reserved-output-aware input budgets, replaceable policy, working-set selection, pin/evict/page-in, Tool protocol atomicity, causal ordering, structured metrics, and JSONL restart consistency. V0.3 Durable Tool Execution remains unchanged underneath it. All tests and examples are offline by default; the optional OpenAI-compatible adapter remains independent and adds no mandatory network dependency.
+V0.4 phase 2 adds explicit pressure measurement, replaceable reclaim policy, deterministic Tool Result pruning, durable provenance-carrying summaries, retained-tail compaction, model-visible shadow/replacement semantics, rolling checkpoints, crash-safe replay, and reclamation metrics. Phase 1 working-set selection and V0.3 Durable Tool Execution remain intact underneath it. All tests and the benchmark are offline by default.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
 ## Next stage
 
-The next decision is among V0.4 phase 2 compaction/summary/tool-result pruning, V0.5 virtual resources and artifact handles, or a SQLite persistence driver. None is part of phase 1.
+The next V0.4 decision is Provider-overflow retry and more accurate Provider-aware token accounting. V0.5 virtual resources/artifact handles, RAG, long-term memory, SQLite, and multi-agent execution remain out of scope.

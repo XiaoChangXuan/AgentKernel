@@ -104,11 +104,15 @@ class DefaultAgentLoop:
                 )
 
                 assembly = self._prompt.assemble(agent.control, self._tools)
-                working_set = self._context.build_working_set(
-                    agent.session,
-                    current_turn=turn,
-                    budget=self._context_budget,
-                    system_prompt=assembly.system_prompt,
+                working_set = await self._while_waiting(
+                    agent,
+                    self._context.prepare_working_set(
+                        agent.session,
+                        current_turn=turn,
+                        budget=self._context_budget,
+                        llm=self._llm,
+                        system_prompt=assembly.system_prompt,
+                    ),
                 )
                 request = ModelRequest(
                     messages=working_set.to_messages(),

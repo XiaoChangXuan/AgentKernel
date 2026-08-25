@@ -14,6 +14,7 @@ from .model import (
     ContextProtocolError,
     ContextTemperature,
     ContextTrustLabel,
+    SummaryProvenance,
 )
 from .tokens import ApproximateTokenEstimator, TokenEstimator
 
@@ -53,8 +54,8 @@ class ContextProjector:
         assistant_indexes: dict[str, int] = {}
         for event in session.events:
             data = event.data
-            turn = _event_turn(data.get("turn"))
             if event.type is EventType.USER_MESSAGE:
+                turn = _event_turn(data.get("turn"))
                 content = str(data["content"])
                 pages.append(
                     self._message_page(
@@ -67,6 +68,7 @@ class ContextProjector:
                     )
                 )
             elif event.type is EventType.ASSISTANT_MESSAGE:
+                turn = _event_turn(data.get("turn"))
                 raw_calls = data.get("tool_calls", [])
                 if not isinstance(raw_calls, list):
                     raise ContextProtocolError("assistant tool_calls must be a list")
@@ -99,6 +101,7 @@ class ContextProjector:
                 if calls:
                     result_pages_by_assistant[page_id] = []
             elif event.type is EventType.TOOL_RESULT:
+                turn = _event_turn(data.get("turn"))
                 try:
                     result = ToolResult.from_dict(data)
                 except (KeyError, TypeError, ValueError) as error:
@@ -139,7 +142,7 @@ class ContextProjector:
                     f"{len(result_ids)} results"
                 )
             pages[index] = replace(assistant, dependencies=tuple(result_ids))
-        return tuple(pages)
+        return _apply_completed_summaries(session, tuple(pages))
 
     def _message_page(
         self,
@@ -187,3 +190,143 @@ def _event_turn(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ContextProtocolError("model-facing Session event has invalid turn")
     return value
+
+
+def _apply_completed_summaries(
+    session: Session,
+    raw_pages: tuple[ContextPage, ...],
+) -> tuple[ContextPage, ...]:
+    """Fold durable completed checkpoints over raw model-visible Pages."""
+
+    visible = list(raw_pages)
+    created: dict[str, object] = {}
+    for event in session.events:
+        if event.type is EventType.CONTEXT_SUMMARY_CREATED:
+            compaction_id = event.data.get("compaction_id")
+            if isinstance(compaction_id, str) and compaction_id:
+                created[compaction_id] = event
+            continue
+        if event.type is not EventType.CONTEXT_COMPACTION_COMPLETED:
+            continue
+        compaction_id = event.data.get("compaction_id")
+        if not isinstance(compaction_id, str):
+            raise ContextProtocolError("completed compaction lacks compaction_id")
+        summary_event = created.get(compaction_id)
+        if summary_event is None:
+            raise ContextProtocolError(
+                f"completed compaction lacks durable summary: {compaction_id}"
+            )
+        data = summary_event.data  # type: ignore[union-attr]
+        source_page_ids = _string_tuple(data.get("source_page_ids"), "source_page_ids")
+        positions = []
+        by_id = {page.page_id: index for index, page in enumerate(visible)}
+        for page_id in source_page_ids:
+            position = by_id.get(page_id)
+            if position is None:
+                raise ContextProtocolError(
+                    f"summary source page is not visible during replay: {page_id}"
+                )
+            positions.append(position)
+        if positions != list(range(positions[0], positions[-1] + 1)):
+            raise ContextProtocolError("summary source pages are not a contiguous range")
+        sources = visible[positions[0] : positions[-1] + 1]
+        summary_page_id = _non_empty_string(data.get("summary_page_id"), "summary_page_id")
+        content = _non_empty_string(data.get("content"), "summary content")
+        summary_cost = _non_negative_int(data.get("summary_token_cost"), "summary_token_cost")
+        provenance = SummaryProvenance(
+            compaction_id=compaction_id,
+            source_start_seq=_positive_int(data.get("source_start_seq"), "source_start_seq"),
+            source_end_seq=_positive_int(data.get("source_end_seq"), "source_end_seq"),
+            source_page_ids=source_page_ids,
+            source_event_seqs=_positive_int_tuple(
+                data.get("source_event_seqs"), "source_event_seqs"
+            ),
+            source_token_cost=_non_negative_int(
+                data.get("source_token_cost"), "source_token_cost"
+            ),
+            original_source_token_cost=_non_negative_int(
+                data.get("original_source_token_cost"),
+                "original_source_token_cost",
+            ),
+            summary_token_cost=summary_cost,
+            created_at=_finite_number(data.get("created_at"), "created_at"),
+            source_fingerprint=_non_empty_string(
+                data.get("source_fingerprint"), "source_fingerprint"
+            ),
+            parent_summary_page_ids=_string_tuple(
+                data.get("parent_summary_page_ids", []),
+                "parent_summary_page_ids",
+                allow_empty=True,
+            ),
+            model=_optional_string(data.get("model"), "model"),
+            provider=_optional_string(data.get("provider"), "provider"),
+        )
+        turns = [page.turn for page in sources if page.turn is not None]
+        summary_page = ContextPage(
+            page_id=summary_page_id,
+            kind=ContextPageKind.SUMMARY,
+            content=content,
+            token_cost=summary_cost,
+            priority=0,
+            temperature=ContextTemperature.WARM,
+            pinned=False,
+            trust_label=ContextTrustLabel.EXTERNAL,
+            created_seq=provenance.source_start_seq,
+            turn=max(turns) if turns else None,
+            message=Message.user(content),
+            summary=provenance,
+        )
+        visible[positions[0] : positions[-1] + 1] = [summary_page]
+    return tuple(visible)
+
+
+def _non_empty_string(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ContextProtocolError(f"{name} must be a non-empty string")
+    return value
+
+
+def _optional_string(value: object, name: str) -> str | None:
+    if value is None:
+        return None
+    return _non_empty_string(value, name)
+
+
+def _non_negative_int(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ContextProtocolError(f"{name} must be a non-negative integer")
+    return value
+
+
+def _positive_int(value: object, name: str) -> int:
+    result = _non_negative_int(value, name)
+    if result < 1:
+        raise ContextProtocolError(f"{name} must be a positive integer")
+    return result
+
+
+def _string_tuple(
+    value: object, name: str, *, allow_empty: bool = False
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or (
+        not allow_empty and not value
+    ) or any(not isinstance(item, str) or not item for item in value):
+        raise ContextProtocolError(f"{name} must be a list of non-empty strings")
+    return tuple(value)
+
+
+def _positive_int_tuple(value: object, name: str) -> tuple[int, ...]:
+    if not isinstance(value, list) or not value:
+        raise ContextProtocolError(f"{name} must be a non-empty integer list")
+    return tuple(_positive_int(item, name) for item in value)
+
+
+def _finite_number(value: object, name: str) -> float:
+    import math
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ContextProtocolError(f"{name} must be a finite number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ContextProtocolError(f"{name} must be a finite number")
+    return result

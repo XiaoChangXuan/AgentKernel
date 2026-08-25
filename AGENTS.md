@@ -1,6 +1,6 @@
-# AgentKernel V0.4 phase 1 agent guide
+# AgentKernel V0.4 phase 2 agent guide
 
-Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.4 phase 1 behavior; code and tests are the final authority when prose drifts.
+Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.4 phase 2 behavior; code and tests are the final authority when prose drifts.
 
 ## Goal
 
@@ -12,7 +12,7 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 - `agentkernel/events.py` and `agentkernel/session.py`: append-only event vocabulary and model-history projection.
 - `agentkernel/persistence.py`: Session header, storage seam, InMemory and single-writer JSONL drivers.
 - `agentkernel/recovery.py`: pure replay validation and recovery analysis; never recovery policy.
-- `agentkernel/context/`: Context Page model, projection, token estimation, policy, working-set selection, pin/evict/page-in, and protocol validation.
+- `agentkernel/context/`: Context Pages, projection, token estimation, policy, pressure, pruning, durable compaction, working-set selection, and protocol validation.
 - `agentkernel/tool_effects.py`: host-only Tool effect and reconciliation values.
 - `agentkernel/durable_tools.py`: mutation authorization, operation identity, WAL boundaries, dispatch, retry, and reconciliation mechanisms.
 - `agentkernel/agent.py`: Agent, AgentControlBlock, state transitions, capabilities, bounding set, budgets.
@@ -36,15 +36,23 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 ## Context VM rules
 
 - Never delete or rewrite Session events to satisfy a Context budget.
+- Never treat a Summary as authoritative over its source events.
 - Context projection must remain derived from durable Session truth plus the current host system prompt.
 - Eviction removes a Page from one model working set, not from history or persistence.
+- Pruning rewrites only a model-visible Tool Result Page; the durable full result remains unchanged.
 - Pinned and explicitly requested Pages may not be silently evicted; fail with `ContextBudgetExceeded` when their atomic closure does not fit.
+- Never compact pinned Pages by default.
 - Tool-call/result protocol validity must survive Context selection. Their atomic group is selected or evicted together.
+- Never split a Tool Call / Tool Result atomic group during pruning or compaction.
 - Selection may use priority and temperature, but final messages must return to causal Session order.
 - Context policy remains outside `DefaultAgentLoop` and may change only selection metadata, never projected facts.
+- Prefer deterministic reclaim before LLM-based compaction.
+- Compaction belongs to Context VM, not `DefaultAgentLoop`; the loop only invokes the Context service seam.
+- Every durable Summary must preserve its source range, Page/event identities, costs, fingerprint, and lifecycle.
+- Only a fully completed durable Summary may shadow source Pages in the model-visible projection.
 - Context Page IDs include Session identity; pin and page-in state must not alias across Sessions.
-- Do not add Context working-set events to the durable log unless they become irreducible source-of-truth facts. Phase 1 metrics are reconstructable runtime values.
-- Do not introduce Summary, compaction, RAG, semantic retrieval, or long-term memory into V0.4 phase 1.
+- Do not persist ordinary Context working sets or reconstructable metrics. Summary lifecycle records are durable because model generation is expensive and non-deterministic.
+- Do not introduce RAG, Memory, or VFS in V0.4 phase 2.
 
 ## Durable Tool rules
 
@@ -63,6 +71,7 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 ```bash
 python examples/basic_agent.py
 python examples/persistent_session.py
+python -m examples.context_reclamation_benchmark
 python examples/real_llm_agent.py  # requires explicit AGENTKERNEL_LLM_* environment
 python -m pytest
 python -m compileall -q agentkernel examples tests
@@ -70,13 +79,13 @@ python -m compileall -q agentkernel examples tests
 
 Run focused tests after changing a module, then the full suite before handoff.
 
-## Prohibited in V0.4 phase 1
+## Prohibited in V0.4 phase 2
 
 - Provider wire or SDK types outside `agentkernel/providers/`.
 - Direct business actions in `loop.py`.
 - A second mutable chat-history store beside Session events.
 - Capability mutation by model or tool code.
-- SQLite, distributed transactions, 2PC, distributed locks, Saga framework, LLM Summary, full DeepSeek-style compaction, VFS/artifact handles, scheduler, multi-agent, subagent, IPC, complex plugin runtime, UI, Gateway, MCP, RAG, embeddings, vector storage, long-term memory, or prompt-injection classification.
+- SQLite, distributed transactions, 2PC, distributed locks, Saga framework, full DeepSeek Surface cloning, VFS/artifact handles, scheduler, multi-agent, subagent, IPC, complex plugin runtime, UI, Gateway, MCP, RAG, embeddings, vector storage, long-term memory, or prompt-injection classification.
 - Large copied sections from reference repositories.
 
 ## Persistence and recovery constraints
@@ -97,4 +106,4 @@ Run focused tests after changing a module, then the full suite before handoff.
 
 ## Stage
 
-Current: V0.4 Context VM phase 1 on top of the V0.3 Durable Tool Execution release. Implemented mechanisms include deterministic Context Pages, configurable token estimation and input budget, replaceable policy, working-set selection, pin/evict/page-in, causal ordering, Tool atomicity, metrics, and JSONL replay consistency. Summary/compaction, VFS, long-term memory, RAG, and SQLite remain future decisions.
+Current: V0.4 Context VM phase 2 on top of the phase 1 working set and V0.3 Durable Tool Execution releases. Implemented mechanisms include explicit pressure, deterministic pruning, durable provenance-carrying Summary Pages, retained-tail/atomic-safe compaction, shadow replay, rolling checkpoints, crash analysis, and reclamation metrics. Provider overflow retry, exact tokenizers, VFS, long-term memory, RAG, and SQLite remain future decisions.

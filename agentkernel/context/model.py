@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -36,6 +37,15 @@ class ContextTrustLabel(StrEnum):
     EXTERNAL = "external"
 
 
+class ContextPressureState(StrEnum):
+    """Resource-pressure classification for one physical input budget."""
+
+    NORMAL = "normal"
+    PRESSURED = "pressured"
+    CRITICAL = "critical"
+    OVERFLOW = "overflow"
+
+
 class ContextBudgetExceeded(RuntimeError):
     """Mandatory Context Pages cannot fit in the physical input budget."""
 
@@ -54,6 +64,83 @@ class ContextPageNotFound(LookupError):
 
 class ContextProtocolError(RuntimeError):
     """Selected pages cannot form a legal provider-neutral message history."""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResultPruning:
+    """Provenance for a deterministic model-visible Tool Result rewrite."""
+
+    source_page_id: str
+    original_token_cost: int
+    retained_token_cost: int
+    strategy: str
+
+    def __post_init__(self) -> None:
+        if not self.source_page_id:
+            raise ValueError("pruning source_page_id must not be empty")
+        if not self.strategy:
+            raise ValueError("pruning strategy must not be empty")
+        for name in ("original_token_cost", "retained_token_cost"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.retained_token_cost >= self.original_token_cost:
+            raise ValueError("a pruned representation must be smaller than its source")
+
+
+@dataclass(frozen=True, slots=True)
+class SummaryProvenance:
+    """Durable source identity and cost accounting for one Summary Page."""
+
+    compaction_id: str
+    source_start_seq: int
+    source_end_seq: int
+    source_page_ids: tuple[str, ...]
+    source_event_seqs: tuple[int, ...]
+    source_token_cost: int
+    original_source_token_cost: int
+    summary_token_cost: int
+    created_at: float
+    source_fingerprint: str
+    parent_summary_page_ids: tuple[str, ...] = ()
+    model: str | None = None
+    provider: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.compaction_id:
+            raise ValueError("summary compaction_id must not be empty")
+        if not self.source_page_ids or len(set(self.source_page_ids)) != len(
+            self.source_page_ids
+        ):
+            raise ValueError("summary source_page_ids must be non-empty and unique")
+        if not self.source_event_seqs or len(set(self.source_event_seqs)) != len(
+            self.source_event_seqs
+        ):
+            raise ValueError("summary source_event_seqs must be non-empty and unique")
+        if self.source_start_seq < 1 or self.source_end_seq < self.source_start_seq:
+            raise ValueError("summary source range must be positive and ordered")
+        if any(seq < 1 for seq in self.source_event_seqs):
+            raise ValueError("summary source event seqs must be positive")
+        for name in (
+            "source_token_cost",
+            "original_source_token_cost",
+            "summary_token_cost",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.summary_token_cost >= self.source_token_cost:
+            raise ValueError("summary must be smaller than its immediate source")
+        if self.original_source_token_cost < self.source_token_cost:
+            raise ValueError("original source cost cannot be below summarized input cost")
+        if not math.isfinite(self.created_at):
+            raise ValueError("summary created_at must be finite")
+        if not self.source_fingerprint:
+            raise ValueError("summary source_fingerprint must not be empty")
+        if len(set(self.parent_summary_page_ids)) != len(
+            self.parent_summary_page_ids
+        ):
+            raise ValueError("parent summary page IDs must be unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +188,8 @@ class ContextPage:
     dependencies: tuple[str, ...] = ()
     atomic_group: str | None = None
     message: Message | None = None
+    pruning: ToolResultPruning | None = None
+    summary: SummaryProvenance | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.page_id, str) or not self.page_id:
@@ -162,6 +251,20 @@ class ContextPage:
                 raise ValueError("context page kind does not match Message role")
             if self.content != self.message.content:
                 raise ValueError("context page content must match Message content")
+        if self.pruning is not None:
+            if self.kind is not ContextPageKind.TOOL_RESULT:
+                raise ValueError("only Tool Result pages may carry pruning provenance")
+            if self.pruning.source_page_id != self.page_id:
+                raise ValueError("pruned page identity must retain its source page ID")
+            if self.pruning.retained_token_cost != self.token_cost:
+                raise ValueError("pruning retained cost must match page token cost")
+        if self.summary is not None:
+            if self.kind is not ContextPageKind.SUMMARY:
+                raise ValueError("only Summary pages may carry summary provenance")
+            if self.summary.summary_token_cost != self.token_cost:
+                raise ValueError("summary token cost must match page token cost")
+        if self.kind is ContextPageKind.SUMMARY and self.summary is None:
+            raise ValueError("Summary pages require durable provenance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,9 +277,22 @@ class ContextMetrics:
     selected_tokens: int
     evicted_tokens: int
     budget_tokens: int
+    pressure_state: ContextPressureState = ContextPressureState.NORMAL
+    pruned_pages: int = 0
+    pruned_tokens_saved: int = 0
+    compacted_pages: int = 0
+    compacted_source_tokens: int = 0
+    summary_tokens: int = 0
+    reclaim_tokens_saved: int = 0
+    compaction_count: int = 0
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "pressure_state", ContextPressureState(self.pressure_state)
+        )
         for name in self.__dataclass_fields__:
+            if name == "pressure_state":
+                continue
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"context metric {name} must be non-negative")
