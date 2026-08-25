@@ -12,7 +12,7 @@
       "lost_events": 0,
       "pending_tool_calls": 0,
       "recovery_status": "interrupted",
-      "replay_time_ms": 0.869,
+      "replay_time_ms": 1.015,
       "success": true
     },
     "strategy": "agentkernel_replay"
@@ -30,7 +30,7 @@
       "lost_events": 0,
       "pending_tool_calls": 0,
       "recovery_status": "interrupted",
-      "replay_time_ms": 0.712,
+      "replay_time_ms": 0.855,
       "success": true
     },
     "strategy": "agentkernel_replay"
@@ -48,7 +48,7 @@
       "lost_events": 0,
       "pending_tool_calls": 1,
       "recovery_status": "interrupted",
-      "replay_time_ms": 12.014,
+      "replay_time_ms": 1.762,
       "success": true
     },
     "strategy": "agentkernel_replay"
@@ -66,7 +66,7 @@
       "lost_events": 0,
       "pending_tool_calls": 1,
       "recovery_status": "interrupted",
-      "replay_time_ms": 1.261,
+      "replay_time_ms": 2.109,
       "success": true
     },
     "strategy": "agentkernel_replay"
@@ -84,7 +84,7 @@
       "lost_events": 0,
       "pending_tool_calls": 1,
       "recovery_status": "interrupted",
-      "replay_time_ms": 1.098,
+      "replay_time_ms": 1.396,
       "success": true
     },
     "strategy": "agentkernel_replay"
@@ -102,7 +102,7 @@
       "lost_events": 0,
       "pending_tool_calls": 0,
       "recovery_status": "interrupted",
-      "replay_time_ms": 1.825,
+      "replay_time_ms": 1.818,
       "success": true
     },
     "strategy": "agentkernel_replay"

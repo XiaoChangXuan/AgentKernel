@@ -6,7 +6,7 @@
       "compaction_cost": 0,
       "context_tokens": 298891,
       "final_correctness": true,
-      "latency_ms": 6.508,
+      "latency_ms": 6.688,
       "reclaim_tokens": 0,
       "recovery_ability": true,
       "success": true
@@ -20,7 +20,7 @@
       "compaction_cost": 0,
       "context_tokens": 618,
       "final_correctness": false,
-      "latency_ms": 9.418,
+      "latency_ms": 9.336,
       "reclaim_tokens": 298273,
       "recovery_ability": false,
       "success": false
@@ -34,7 +34,7 @@
       "compaction_cost": 0,
       "context_tokens": 661,
       "final_correctness": true,
-      "latency_ms": 10.096,
+      "latency_ms": 9.802,
       "reclaim_tokens": 298230,
       "recovery_ability": false,
       "success": true
@@ -49,7 +49,7 @@
       "compaction_count": 1,
       "context_tokens": 2091,
       "final_correctness": true,
-      "latency_ms": 577.613,
+      "latency_ms": 517.652,
       "pruned_pages": 0,
       "reclaim_tokens": 284791,
       "recovery_ability": true,

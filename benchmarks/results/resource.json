@@ -32,12 +32,12 @@
     "metrics": {
       "context_bytes": 12806,
       "estimated_tokens": 3202,
-      "read_latency_ms": 8.807,
+      "read_latency_ms": 10.989,
       "resource_bytes": 10485760,
       "resource_bytes_read": 129,
       "resource_reads": 3,
       "restart_recovery": true,
-      "store_bytes": 10486294,
+      "store_bytes": 10486293,
       "success": true
     },
     "strategy": "artifact_handle"
@@ -75,12 +75,12 @@
     "metrics": {
       "context_bytes": 12809,
       "estimated_tokens": 3203,
-      "read_latency_ms": 16.369,
+      "read_latency_ms": 11.199,
       "resource_bytes": 104857600,
       "resource_bytes_read": 129,
       "resource_reads": 3,
       "restart_recovery": true,
-      "store_bytes": 104858134,
+      "store_bytes": 104858135,
       "success": true
     },
     "strategy": "artifact_handle"
@@ -118,12 +118,12 @@
     "metrics": {
       "context_bytes": 12809,
       "estimated_tokens": 3203,
-      "read_latency_ms": 14.612,
+      "read_latency_ms": 11.99,
       "resource_bytes": 524288000,
       "resource_bytes_read": 129,
       "resource_reads": 3,
       "restart_recovery": true,
-      "store_bytes": 524288535,
+      "store_bytes": 524288534,
       "success": true
     },
     "strategy": "artifact_handle"
