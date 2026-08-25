@@ -45,8 +45,14 @@ DefaultAgentLoop
         └── DurableToolExecutor
               ├── operation identity + mutation WAL
               ├── host execution
+              ├── optional large-result externalization
               ├── idempotent retry / reconciliation
               └── structured ToolResult
+
+Resource layer (V0.5)
+  ├── ResourceService ──> identity + owner/range/size enforcement
+  ├── ResourceStore ──> LocalResourceStore
+  └── artifact:// handle ──> resource_stat / resource_read
 
 Session
   ├── append-only semantic Event Log
@@ -194,6 +200,23 @@ The summary lifecycle (`requested → started → summary created → completed`
 
 This is bounded, lossy context reclamation—not infinite context, lossless summarization, perfect memory, RAG, or long-term memory.
 
+## Virtual Resource / Artifact Handle
+
+V0.5 可把超大 Tool Result 的完整 UTF-8/JSON 字节持久化到可替换 `ResourceStore`，而 Session 与 Context 只保留确定性的头尾预览和 `artifact://<resource_id>` 句柄。句柄不是主机路径；模型只能通过 `resource_stat` / `resource_read` 进入 `ResourceService`，由 Kernel 校验 agent/session 所有权、offset/limit 和硬读取上限。重启后，只要配置相同的持久 Resource root，句柄仍可解析。
+
+```python
+resources = ResourceService(LocalResourceStore("state/resources"))
+externalizer = ToolResultExternalizer(resources)
+executor = DurableToolExecutor(tools, result_processor=externalizer)
+```
+
+`DefaultAgentLoop` 不包含资源阈值或驱动分支。V0.4 pruning 只裁剪模型可见 Context Page；V0.5 externalization 则在 Tool Result 写入 Session 之前保存 raw bytes。V0.5 不是完整 VFS，也不包含搜索、删除/GC、远程存储或文档解析。完整设计见 [`docs/V0.5_RESOURCE_ARCHITECTURE.md`](docs/V0.5_RESOURCE_ARCHITECTURE.md)，离线示例运行：
+
+```bash
+python examples/resource_handles.py
+python -m benchmarks.resource_handle_benchmark --sizes-mb 10,100
+```
+
 Run the offline 200-turn comparison:
 
 ```bash
@@ -268,10 +291,8 @@ python -m pytest
 
 ## Current stage
 
-V0.4 adds complete-request token accounting, optional model limits, Provider-boundary failure normalization, and one-shot overflow recovery on top of pruning, durable compaction, and working-set selection. V0.3 Durable Tool Execution remains intact underneath it. All tests and benchmarks are offline by default.
+V0.5 adds durable Artifact resources, opaque handles, bounded authorized reads, restart resolution, and replaceable large Tool Result externalization on top of V0.4 Context VM and V0.3 Durable Tool Execution. All tests and benchmarks are offline by default.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior, [`docs/V0.4_RELEASE.md`](docs/V0.4_RELEASE.md) for the release summary, and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
-## Next stage
-
-V0.5 candidate: Virtual Resource / Artifact Handle. It is not implemented as part of V0.4.
+VFS, automatic resource GC, remote stores, search, richer artifact parsing, RAG, long-term memory, scheduler, and multi-agent orchestration remain future decisions.

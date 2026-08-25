@@ -71,3 +71,33 @@ The benchmark supports closing V0.4: Context VM materially reduced real Provider
 input while matching Full History on all three scoped quality checks. This is not a
 general coding-agent success-rate claim. The fixture is small, uses one model, and
 does not measure long-horizon SWE-bench performance or production cost variance.
+# V0.5 Resource Handle benchmark (2026-08-25)
+
+Command:
+
+```bash
+python -m benchmarks.resource_handle_benchmark --sizes-mb 10,100 --json
+```
+
+The workload is deterministic local UTF-8 log text. `Full` stores and projects
+the entire Tool Result. `V0.4 Pruning` keeps the full Session event but applies
+the existing deterministic Context Page pruner. `V0.5 Handle` stores raw bytes
+in LocalResourceStore and places only an 8 KiB head, 4 KiB tail, omission marker,
+and handle in Session. Estimated tokens use the offline approximate estimator;
+latency is one 64 KiB handle read after creating a new ResourceService instance.
+
+| Input | Strategy | Model-visible bytes | Est. tokens | Session bytes | Resource bytes | Raw retained | Restart read | Read latency |
+|---:|---|---:|---:|---:|---:|---|---|---:|
+| 10 MiB | Full | 10,695,548 | 2,673,887 | 10,696,754 | 0 | yes | yes | n/a |
+| 10 MiB | V0.4 Pruning | 49,196 | 12,299 | 10,696,758 | 0 | yes | yes | n/a |
+| 10 MiB | V0.5 Handle | 13,027 | 3,257 | 14,214 | 10,486,245 | yes | yes | 2.256 ms |
+| 100 MiB | Full | 106,954,825 | 26,738,707 | 106,956,034 | 0 | yes | yes | n/a |
+| 100 MiB | V0.4 Pruning | 49,197 | 12,300 | 106,956,029 | 0 | yes | yes | n/a |
+| 100 MiB | V0.5 Handle | 13,030 | 3,258 | 14,215 | 104,858,086 | yes | yes | 2.657 ms |
+
+For the 100 MiB case, V0.5 reduced the semantic Session artifact by about
+99.987% relative to Full while retaining all raw bytes in the separate Resource
+artifact. V0.4 already bounded model context, but its Session artifact remained
+about 107 MB; V0.5 kept both model projection and Session small. These numbers
+are local mechanism measurements, not end-to-end model quality or production
+storage throughput claims.

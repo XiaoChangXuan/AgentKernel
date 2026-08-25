@@ -17,6 +17,7 @@ from .tools import (
     ToolEffectKind,
     ToolExecutionContext,
     ToolRegistry,
+    ToolResultProcessor,
 )
 
 
@@ -35,9 +36,11 @@ class DurableToolExecutor:
         tools: ToolRegistry,
         *,
         operation_id_factory: OperationIdFactory | None = None,
+        result_processor: ToolResultProcessor | None = None,
     ) -> None:
         self._tools = tools
         self._operation_id_factory = operation_id_factory or _new_operation_id
+        self._result_processor = result_processor
 
     async def execute(
         self,
@@ -60,7 +63,8 @@ class DurableToolExecutor:
                 tool_call_id=call.call_id,
                 operation_id=self._fresh_operation_id(session),
             )
-            return await self._tools.invoke(resolved, call, context)
+            result = await self._tools.invoke(resolved, call, context)
+            return await self._process_result(call, result, context)
 
         operation_id = self._fresh_operation_id(session)
         session.append(
@@ -163,6 +167,17 @@ class DurableToolExecutor:
                 ReconcileStatus.UNKNOWN,
                 message=f"reconciliation failed: {error}",
             )
+        if observed.status is ReconcileStatus.SUCCEEDED:
+            processed = await self._process_result(
+                operation.tool_call,
+                ToolResult.success(operation.tool_call, observed.output),
+                context,
+            )
+            observed = ReconcileResult(
+                ReconcileStatus.SUCCEEDED,
+                output=processed.output,
+                message=observed.message,
+            )
         payload: dict[str, JsonValue] = {
             "turn": operation.turn,
             "step": operation.step,
@@ -225,6 +240,7 @@ class DurableToolExecutor:
             attempt=attempt,
         )
         result = await self._tools.invoke(definition, call, context)
+        result = await self._process_result(call, result, context)
         if result.ok:
             self._append_commit(
                 session,
@@ -244,6 +260,25 @@ class DurableToolExecutor:
                 result.error.message,
             )
         return result
+
+    async def _process_result(
+        self,
+        call: ToolCall,
+        result: ToolResult,
+        context: ToolExecutionContext,
+    ) -> ToolResult:
+        if self._result_processor is None:
+            return result
+        processed = await self._result_processor.process(call, result, context)
+        if not isinstance(processed, ToolResult):
+            raise DurableToolExecutionError(
+                "result processor must return ToolResult"
+            )
+        if processed.call_id != call.call_id or processed.name != call.name:
+            raise DurableToolExecutionError(
+                "result processor must preserve Tool Call identity"
+            )
+        return processed
 
     @staticmethod
     def _append_commit(

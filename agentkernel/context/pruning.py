@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from ..truncation import retain_head_tail
 from .model import ContextPage, ContextPageKind, ToolResultPruning
 from .tokens import ApproximateTokenEstimator, TokenEstimator
 
@@ -66,7 +67,7 @@ class ToolResultPruner:
             f"\n\n... omitted {omitted_tokens} tokens / "
             f"{omitted_lines} lines ...\n\n"
         )
-        content = text[:head_chars] + marker + text[len(text) - tail_chars :]
+        content = retain_head_tail(text, head_chars, tail_chars, marker)
         retained_cost = self.estimator.count_text(content)
         if retained_cost >= page.token_cost:
             return page

@@ -8,7 +8,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Mapping, TypeAlias
+from typing import Mapping, Protocol, TypeAlias
 
 from .agent import AgentControlBlock
 from .protocol import (
@@ -27,6 +27,23 @@ class ToolConcurrency(StrEnum):
 
     PARALLEL = "parallel"
     EXCLUSIVE = "exclusive"
+
+
+class ToolExecutionError(RuntimeError):
+    """Typed handler failure preserved across the Tool syscall boundary."""
+
+    def __init__(self, code: ErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code = ErrorCode(code)
+
+
+class ToolResultProcessor(Protocol):
+    async def process(
+        self,
+        call: ToolCall,
+        result: ToolResult,
+        context: "ToolExecutionContext",
+    ) -> ToolResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +247,8 @@ class ToolRegistry:
             output = await definition.execute(call.arguments, context)
             if not is_json_value(output):
                 raise TypeError("tool returned a value that is not lossless JSON")
+        except ToolExecutionError as error:
+            return ToolResult.failure(call, error.code, str(error))
         except TimeoutError:
             return ToolResult.failure(
                 call,

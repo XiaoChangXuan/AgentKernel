@@ -1,10 +1,10 @@
-# AgentKernel V0.4 architecture
+# AgentKernel V0.5 architecture
 
 This document describes implemented behavior. The roadmap and long-term design constraints live in [`IMPLEMENTATION_BLUEPRINT.md`](IMPLEMENTATION_BLUEPRINT.md).
 
 ## Boundary
 
-AgentKernel V0.4 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, and pressure-driven management of each model request's physical Context working set. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection/reclamation boundaries, complete-request accounting, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, Tool, token-estimation, Context-policy, and reclaim-policy implementations remain replaceable seams; they do not own Kernel truth.
+AgentKernel V0.5 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, pressure-driven management of each model request's physical Context working set, and a minimal durable Artifact Resource layer. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection/reclamation boundaries, Resource identity/authorization/range validation, complete-request accounting, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, ResourceStore, Model, Tool, token-estimation, Context-policy, externalization-policy, and reclaim-policy implementations remain replaceable seams; they do not own Kernel truth.
 
 ## Modules
 
@@ -20,6 +20,7 @@ AgentKernel V0.4 is a single-process, single-agent mechanism layer with an optio
 | `tool_effects.py` | Host-only effect classifications and reconciliation values. |
 | `tools.py` | Runtime definitions, schema projection, capability enforcement, timeout, handler invocation, and failure normalization. |
 | `durable_tools.py` | Mutation prepare/dispatch/commit protocol, stable operation IDs, explicit retry, and reconciliation. |
+| `resources/` | Artifact identity/metadata/handle projection, ResourceStore and local driver, owner/range validation, result externalization policy, metrics, and stat/read tools. |
 | `prompt.py` | Fresh system-prompt and authorized-tool projection for each step. |
 | `agent.py` | AgentControlBlock identities, states, immutable capability sets, bounding invariant, and budgets. |
 | `hooks.py` | Ordered notification seam for `before_step`, `before_tool`, and `after_tool`. |
@@ -54,6 +55,7 @@ repeat:
         resolve + capability check
         for mutation: prepare + flush, dispatch + flush
         invoke Tool handler
+        optional ToolResultProcessor: durable Resource commit → preview + handle
         for mutation: commit/abort + flush
       append tool/result
       notify after_tool
@@ -66,6 +68,12 @@ repeat:
 ```
 
 `DefaultAgentLoop` never keeps a message list and contains no token threshold or eviction policy. Each model request receives a fresh `ContextWorkingSet` through the replaceable `ContextService` seam. `Session.derive_messages()` remains the complete V0.1–V0.3 compatibility projection; the Loop now uses the budgeted projection. Boundary, WAL, and `tool/call` events are log-only; `user/message`, `assistant/message`, and `tool/result` produce Context Pages.
+
+## Resource layer
+
+V0.5 externalizes selected oversized Tool Results before mutation commit and before `tool/result` append. `ResourceService` generates `ResourceId`/`HandleId`, commits bytes through `ResourceStore`, checks exact agent/session ownership, validates the only supported `artifact://` URI and byte range, and returns a safe `ResourceHandle`. `LocalResourceStore` atomically publishes durable payload+metadata directories. The model sees no store path and can retrieve only a bounded range through registered `resource_stat` / `resource_read` ToolDefinitions.
+
+Session remains the semantic source of truth for the Tool execution and its handle; ResourceStore is the byte source of truth for externalized content. Context VM projects only the preview+handle already present in Session and never reads or mutates resource bytes. A committed resource absent from a `tool/result` is a retained, identifiable orphan (even if an interrupted mutation WAL mentions it); V0.5 deliberately defers automatic GC. See [`V0.5_RESOURCE_ARCHITECTURE.md`](V0.5_RESOURCE_ARCHITECTURE.md).
 
 ## Context VM
 
@@ -118,7 +126,7 @@ Each immutable `ContextPage` carries:
 - `trust_label`: `KERNEL`, `USER`, `TOOL`, or `EXTERNAL`;
 - `dependencies` and an optional `atomic_group`.
 
-There is no persisted `last_access`, VFS `source_uri`, artifact handle, embedding, or mutable Page store. Raw Pages use Session-qualified event identity; Summary Pages additionally carry explicit source Page/event identities and a source fingerprint.
+There is no persisted `last_access`, VFS `source_uri`, embedding, or mutable Page store. A Tool Result Page may contain a V0.5 `artifact://` handle because that handle is already durable Session data; Context Page itself does not own or resolve it. Raw Pages use Session-qualified event identity; Summary Pages additionally carry explicit source Page/event identities and a source fingerprint.
 
 Projection and policy are separate. `ContextProjector` deterministically maps current Session events to neutral Pages and never projects Turn/Step boundaries, Tool Calls, or `tool/prepare`, `tool/dispatch`, `tool/commit`, `tool/abort`, and `tool/reconcile`. `ContextPolicy` may change only priority, temperature, and pin status; the manager rejects a policy that changes content, identity, cost, trust, dependency, or origin.
 
