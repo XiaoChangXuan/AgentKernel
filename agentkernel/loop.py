@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass
 from typing import TypeVar
 
+from .accounting import UsageCollector
 from .agent import Agent, AgentState
 from .context import ContextBudget, ContextManager, ContextService, ContextWorkingSet
 from .durable_tools import DurableToolExecutor
@@ -17,6 +18,7 @@ from .process import ProcessState
 from .protocol import ModelRequest, ModelResponse, ToolCall, ToolResult
 from .scheduler import (
     CooperativeScheduler,
+    ProcessBudgetExceeded,
     ProcessCancelled,
     ProcessPaused,
     SchedulerSafePoint,
@@ -26,6 +28,7 @@ from .token_accounting import (
     RequestTokenAccounting,
     RequestTokenEstimate,
 )
+from .resources.model import ResourceMetrics
 from .tools import ToolRegistry
 
 T = TypeVar("T")
@@ -68,6 +71,8 @@ class DefaultAgentLoop:
         context_budget: ContextBudget | None = None,
         token_accounting: RequestTokenAccounting | None = None,
         scheduler: CooperativeScheduler | None = None,
+        usage_collector: UsageCollector | None = None,
+        resource_metrics: Iterable[ResourceMetrics] = (),
     ) -> None:
         self._llm = llm
         self._tools = tools
@@ -93,6 +98,10 @@ class DefaultAgentLoop:
             or ApproximateRequestTokenAccounting()
         )
         self._scheduler = scheduler
+        self._usage_collector = usage_collector or (
+            scheduler.usage_collector if scheduler is not None else None
+        )
+        self._resource_metrics = tuple(resource_metrics)
         self.last_context_recovery: ContextRecoveryRecord | None = None
 
     async def run(
@@ -200,6 +209,7 @@ class DefaultAgentLoop:
                     system_prompt=assembly.system_prompt,
                     process_id=process_id,
                 )
+                self._record_llm_usage(process_id, response.usage)
                 agent.session.append(
                     EventType.ASSISTANT_MESSAGE,
                     {
@@ -208,6 +218,10 @@ class DefaultAgentLoop:
                         "content": response.content,
                         "tool_calls": [call.as_dict() for call in response.tool_calls],
                     },
+                )
+                self._scheduler_safe_point(
+                    process_id,
+                    SchedulerSafePoint.AFTER_LLM_CALL,
                 )
 
                 if not response.tool_calls:
@@ -301,6 +315,26 @@ class DefaultAgentLoop:
                 agent.control.transition(AgentState.RUNNING)
             if agent.control.state is AgentState.RUNNING:
                 agent.control.transition(AgentState.EXITED)
+            raise
+        except ProcessBudgetExceeded:
+            if step_open:
+                agent.session.append(
+                    EventType.STEP_END,
+                    {
+                        "turn": turn,
+                        "step": current_step,
+                        "outcome": "resource_budget_exceeded",
+                    },
+                )
+            if not turn_closed:
+                agent.session.append(
+                    EventType.TURN_END,
+                    {"turn": turn, "reason": "resource_budget_exceeded"},
+                )
+            if agent.control.state is AgentState.WAITING:
+                agent.control.transition(AgentState.RUNNING)
+            if agent.control.state is AgentState.RUNNING:
+                agent.control.transition(AgentState.PAUSED)
             raise
         except LoopBudgetExceeded:
             raise
@@ -514,6 +548,12 @@ class DefaultAgentLoop:
                 tool_result=result,
             )
         )
+        self._record_tool_usage(process_id)
+        self._collect_resource_metrics(process_id)
+        self._scheduler_safe_point(
+            process_id,
+            SchedulerSafePoint.AFTER_TOOL_CALL,
+        )
         return result
 
     async def _while_waiting(
@@ -555,9 +595,11 @@ class DefaultAgentLoop:
             process = self._scheduler.manager.get(process_id)
         if process.state is ProcessState.READY:
             self._scheduler.dispatch(process_id)
+            self._start_usage(process_id)
             return
         if process.state is not ProcessState.RUNNING:
             raise RuntimeError(f"process must be READY or RUNNING, got {process.state}")
+        self._start_usage(process_id)
 
     def _scheduler_safe_point(
         self,
@@ -581,6 +623,45 @@ class DefaultAgentLoop:
         process = self._scheduler.manager.get(process_id)
         if process.state is not ProcessState.EXITED:
             self._scheduler.exit_process(process_id, exit_status=exit_status)
+
+    def _start_usage(self, process_id: str | None) -> None:
+        if self._usage_collector is None or process_id is None:
+            return
+        self._usage_collector.start_process(process_id)
+        for index, metrics in enumerate(self._resource_metrics):
+            self._usage_collector.begin_resource_metrics(
+                process_id,
+                metrics.snapshot(),
+                source=f"resource:{index}",
+            )
+
+    def _record_llm_usage(
+        self,
+        process_id: str | None,
+        usage: object,
+    ) -> None:
+        if self._usage_collector is None or process_id is None:
+            return
+        from .protocol import ModelUsage
+
+        if usage is not None and not isinstance(usage, ModelUsage):
+            raise TypeError("response usage must be ModelUsage")
+        self._usage_collector.record_llm_usage(process_id, usage)
+
+    def _record_tool_usage(self, process_id: str | None) -> None:
+        if self._usage_collector is None or process_id is None:
+            return
+        self._usage_collector.record_tool_call(process_id)
+
+    def _collect_resource_metrics(self, process_id: str | None) -> None:
+        if self._usage_collector is None or process_id is None:
+            return
+        for index, metrics in enumerate(self._resource_metrics):
+            self._usage_collector.observe_resource_metrics(
+                process_id,
+                metrics.snapshot(),
+                source=f"resource:{index}",
+            )
 
     @staticmethod
     def _close_budget_failure(

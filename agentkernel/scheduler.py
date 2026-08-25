@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from enum import StrEnum
 
+from .accounting import UsageCollector, UsageLimitExceeded
 from .agent import AgentControlBlock
 from .process import ProcessControlBlock, ProcessState
 
@@ -47,13 +48,34 @@ class ProcessCancelled(SchedulerError):
         )
 
 
+class ProcessBudgetExceeded(SchedulerError):
+    """Raised when a process exceeds a Kernel runtime resource budget."""
+
+    def __init__(
+        self,
+        process_id: str,
+        safe_point: "SchedulerSafePoint",
+        exceeded: UsageLimitExceeded,
+    ) -> None:
+        self.process_id = process_id
+        self.safe_point = SchedulerSafePoint(safe_point)
+        self.exceeded = exceeded
+        super().__init__(
+            f"process {process_id} exceeded {exceeded.limit} "
+            f"at safe point {self.safe_point.value}: "
+            f"{exceeded.usage} > {exceeded.maximum}"
+        )
+
+
 class SchedulerSafePoint(StrEnum):
     """Named cooperative safe points exposed by the default Agent loop."""
 
     BEFORE_TURN_START = "turn_start.before"
     BEFORE_STEP_START = "step_start.before"
     BEFORE_LLM_CALL = "llm_call.before"
+    AFTER_LLM_CALL = "llm_call.after"
     BEFORE_TOOL_CALL = "tool_call.before"
+    AFTER_TOOL_CALL = "tool_call.after"
     BEFORE_DURABLE_DISPATCH = "durable_dispatch.before"
     AFTER_DURABLE_DISPATCH = "durable_dispatch.after"
 
@@ -137,8 +159,14 @@ class ProcessManager:
 class CooperativeScheduler:
     """Kernel-owned cooperative scheduler over ProcessControlBlock state."""
 
-    def __init__(self, manager: ProcessManager | None = None) -> None:
+    def __init__(
+        self,
+        manager: ProcessManager | None = None,
+        *,
+        usage_collector: UsageCollector | None = None,
+    ) -> None:
         self._manager = manager or ProcessManager()
+        self._usage_collector = usage_collector
         self._ready: deque[str] = deque()
         self._waiting: dict[str, str] = {}
         self._blocked: dict[str, str] = {}
@@ -148,6 +176,12 @@ class CooperativeScheduler:
         """Return the backing process table."""
 
         return self._manager
+
+    @property
+    def usage_collector(self) -> UsageCollector | None:
+        """Return the optional process usage collector."""
+
+        return self._usage_collector
 
     @property
     def ready_queue(self) -> tuple[str, ...]:
@@ -367,7 +401,26 @@ class CooperativeScheduler:
             if process.state is not ProcessState.PAUSED:
                 process.transition(ProcessState.PAUSED)
             raise ProcessPaused(process_id, point)
+        exceeded = self.check_budget(process_id)
+        if exceeded is not None:
+            self._cleanup_indexes(process_id)
+            if process.state is ProcessState.RUNNING:
+                process.transition(
+                    ProcessState.BLOCKED,
+                    blocked_reason=f"budget_exceeded:{exceeded.limit}",
+                )
+                assert process.blocked_reason is not None
+                self._blocked[process_id] = process.blocked_reason
+            raise ProcessBudgetExceeded(process_id, point, exceeded)
         return process
+
+    def check_budget(self, process_id: str) -> UsageLimitExceeded | None:
+        """Evaluate process runtime usage against its optional budget."""
+
+        if self._usage_collector is None:
+            return None
+        process = self._manager.get(process_id)
+        return self._usage_collector.exceeded_budget(process_id, process.budget)
 
     def _index_process(self, process: ProcessControlBlock) -> None:
         if process.state is ProcessState.READY:

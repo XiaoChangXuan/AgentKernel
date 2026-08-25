@@ -7,6 +7,12 @@ from .agent import (
     AgentState,
     CapabilityBoundError,
 )
+from .accounting import (
+    ProcessUsageSnapshot,
+    UsageCollector,
+    UsageLimitExceeded,
+    exceeded_budget,
+)
 from .capabilities import (
     ARTIFACT_RESOURCE_SCOPE,
     AuthorizationDecision,
@@ -98,6 +104,7 @@ from .scheduler import (
     CooperativeScheduler,
     NoRunnableProcess,
     ProcessAlreadyExists,
+    ProcessBudgetExceeded,
     ProcessCancelled,
     ProcessManager,
     ProcessNotFound,
@@ -216,12 +223,14 @@ __all__ = [
     "PromptAssembly",
     "PromptService",
     "ProcessAlreadyExists",
+    "ProcessBudgetExceeded",
     "ProcessCancelled",
     "ProcessControlBlock",
     "ProcessManager",
     "ProcessNotFound",
     "ProcessPaused",
     "ProcessState",
+    "ProcessUsageSnapshot",
     "OperationRecoveryClassification",
     "PersistedSession",
     "RecoveryAnalysis",
@@ -282,8 +291,11 @@ __all__ = [
     "ToolResultPrunerConfig",
     "ToolResultPruning",
     "UnsupportedSessionFormatError",
+    "UsageCollector",
+    "UsageLimitExceeded",
     "ThresholdExternalizationPolicy",
     "analyze_recovery",
     "assess_context_pressure",
+    "exceeded_budget",
     "resource_tool_definitions",
 ]
