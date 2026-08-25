@@ -15,6 +15,7 @@ from .tools import (
     ReconcileStatus,
     ToolDefinition,
     ToolEffectKind,
+    ToolAuthorization,
     ToolExecutionContext,
     ToolRegistry,
     ToolResultProcessor,
@@ -53,9 +54,23 @@ class DurableToolExecutor:
     ) -> ToolResult:
         """Execute a live Tool Call, durably preparing mutations first."""
 
-        resolved = self._tools.resolve_for_execution(call, agent)
-        if isinstance(resolved, ToolResult):
-            return resolved
+        authorization = self._tools.authorization_for_execution(call, agent)
+        if isinstance(authorization, ToolResult):
+            return authorization
+        if not authorization.allowed:
+            if authorization.definition.effect_kind is not ToolEffectKind.READ_ONLY:
+                self._append_authorization_denied(
+                    session,
+                    turn,
+                    step,
+                    call,
+                    None,
+                    "prepare",
+                    authorization,
+                )
+                session.flush()
+            return ToolResult.failure(call, ErrorCode.EACCES, authorization.reason)
+        resolved = authorization.definition
         if resolved.effect_kind is ToolEffectKind.READ_ONLY:
             context = ToolExecutionContext(
                 agent_id=agent.agent_id,
@@ -68,6 +83,16 @@ class DurableToolExecutor:
             return await self._process_result(call, result, context)
 
         operation_id = self._fresh_operation_id(session)
+        authorization_context = authorization.as_context()
+        self._append_authorization_granted(
+            session,
+            turn,
+            step,
+            call,
+            operation_id,
+            "prepare",
+            authorization,
+        )
         session.append(
             EventType.TOOL_PREPARE,
             {
@@ -77,6 +102,7 @@ class DurableToolExecutor:
                 "tool_call_id": call.call_id,
                 "tool_name": call.name,
                 "effect_kind": resolved.effect_kind.value,
+                "authorization": authorization_context,
             },
         )
         session.flush()
@@ -224,6 +250,37 @@ class DurableToolExecutor:
         operation_id: str,
         attempt: int,
     ) -> ToolResult:
+        authorization = self._tools.authorization_for_definition(definition, agent)
+        if not authorization.allowed:
+            self._append_authorization_denied(
+                session,
+                turn,
+                step,
+                call,
+                operation_id,
+                "dispatch",
+                authorization,
+            )
+            self._append_abort(
+                session,
+                turn,
+                step,
+                operation_id,
+                ErrorCode.EACCES,
+                authorization.reason,
+            )
+            return ToolResult.failure(call, ErrorCode.EACCES, authorization.reason)
+
+        authorization_context = authorization.as_context()
+        self._append_authorization_granted(
+            session,
+            turn,
+            step,
+            call,
+            operation_id,
+            "dispatch",
+            authorization,
+        )
         session.append(
             EventType.TOOL_DISPATCH,
             {
@@ -231,6 +288,7 @@ class DurableToolExecutor:
                 "step": step,
                 "operation_id": operation_id,
                 "attempt": attempt,
+                "authorization": authorization_context,
             },
         )
         session.flush()
@@ -323,6 +381,50 @@ class DurableToolExecutor:
         )
         session.flush()
 
+    @staticmethod
+    def _append_authorization_granted(
+        session: Session,
+        turn: int,
+        step: int,
+        call: ToolCall,
+        operation_id: str | None,
+        boundary: str,
+        authorization: ToolAuthorization,
+    ) -> None:
+        session.append(
+            EventType.AUTHORIZATION_GRANTED,
+            _authorization_event_payload(
+                turn,
+                step,
+                call,
+                operation_id,
+                boundary,
+                authorization,
+            ),
+        )
+
+    @staticmethod
+    def _append_authorization_denied(
+        session: Session,
+        turn: int,
+        step: int,
+        call: ToolCall,
+        operation_id: str | None,
+        boundary: str,
+        authorization: ToolAuthorization,
+    ) -> None:
+        session.append(
+            EventType.AUTHORIZATION_DENIED,
+            _authorization_event_payload(
+                turn,
+                step,
+                call,
+                operation_id,
+                boundary,
+                authorization,
+            ),
+        )
+
     def _resolve_matching(
         self,
         operation: DurableOperationRecovery,
@@ -394,3 +496,26 @@ class DurableToolExecutor:
 
 def _new_operation_id() -> str:
     return f"op_{uuid.uuid4().hex}"
+
+
+def _authorization_event_payload(
+    turn: int,
+    step: int,
+    call: ToolCall,
+    operation_id: str | None,
+    boundary: str,
+    authorization: ToolAuthorization,
+) -> dict[str, JsonValue]:
+    payload = authorization.as_context()
+    payload.update(
+        {
+            "turn": turn,
+            "step": step,
+            "tool_call_id": call.call_id,
+            "tool_name": call.name,
+            "boundary": boundary,
+        }
+    )
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    return payload

@@ -15,6 +15,8 @@ from .capabilities import (
     AuthorizationDecision,
     AuthorizationRequest,
     CapabilityEvaluator,
+    CapabilityGrant,
+    TOOL_EXECUTE_ACTION,
     legacy_tool_request,
 )
 from .protocol import (
@@ -160,6 +162,38 @@ class ToolDefinition:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class ToolAuthorization:
+    """Kernel authorization snapshot for one Tool execution request."""
+
+    definition: ToolDefinition
+    request: AuthorizationRequest
+    decision: AuthorizationDecision
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision.allowed
+
+    @property
+    def reason(self) -> str:
+        return self.decision.reason
+
+    def as_context(self) -> dict[str, JsonValue]:
+        """Return the durable JSON authorization context."""
+
+        payload: dict[str, JsonValue] = {
+            "agent_id": self.request.agent_id,
+            "action": self.request.action,
+            "resource_scope": self.request.resource,
+            "reason": self.decision.reason,
+        }
+        if self.decision.matched_grant is not None:
+            payload["matched_grant"] = _grant_payload(
+                self.decision.matched_grant
+            )
+        return payload
+
+
 class ToolRegistry:
     """Own model projection and the enforced tool/syscall boundary."""
 
@@ -244,6 +278,24 @@ class ToolRegistry:
     ) -> ToolDefinition | ToolResult:
         """Resolve and authorize before any durable intent is created."""
 
+        authorization = self.authorization_for_execution(call, agent)
+        if isinstance(authorization, ToolResult):
+            return authorization
+        if not authorization.allowed:
+            return ToolResult.failure(
+                call,
+                ErrorCode.EACCES,
+                authorization.reason,
+            )
+        return authorization.definition
+
+    def authorization_for_execution(
+        self,
+        call: ToolCall,
+        agent: AgentControlBlock,
+    ) -> ToolAuthorization | ToolResult:
+        """Resolve a call and return its authorization decision."""
+
         definition = self._definitions.get(call.name)
         if definition is None:
             return ToolResult.failure(
@@ -251,15 +303,17 @@ class ToolRegistry:
                 ErrorCode.ENOENT,
                 f'tool "{call.name}" is not registered',
             )
+        return self.authorization_for_definition(definition, agent)
+
+    def authorization_for_definition(
+        self,
+        definition: ToolDefinition,
+        agent: AgentControlBlock,
+    ) -> ToolAuthorization:
+        """Evaluate a registered definition for the current agent."""
+
         evaluator = _evaluator_for_agent(agent)
-        decision = _authorization_decision(definition, agent, evaluator)
-        if not decision.allowed:
-            return ToolResult.failure(
-                call,
-                ErrorCode.EACCES,
-                decision.reason,
-            )
-        return definition
+        return _tool_authorization(definition, agent, evaluator)
 
     async def invoke(
         self,
@@ -311,22 +365,78 @@ def _authorization_decision(
     agent: AgentControlBlock,
     evaluator: CapabilityEvaluator,
 ) -> AuthorizationDecision:
+    return _tool_authorization(definition, agent, evaluator).decision
+
+
+def _tool_authorization(
+    definition: ToolDefinition,
+    agent: AgentControlBlock,
+    evaluator: CapabilityEvaluator,
+) -> ToolAuthorization:
+    checks = _authorization_checks(definition, agent)
+    primary = checks[-1]
+    primary_decision = AuthorizationDecision(True, "allowed")
+    for request in checks:
+        if _is_default_tool_request(definition, request):
+            decision = AuthorizationDecision(True, "allowed")
+        else:
+            decision = evaluator.authorize(request)
+        if not decision.allowed:
+            return ToolAuthorization(definition, request, decision)
+        if request == primary:
+            primary_decision = decision
+    return ToolAuthorization(definition, primary, primary_decision)
+
+
+def _authorization_checks(
+    definition: ToolDefinition,
+    agent: AgentControlBlock,
+) -> tuple[AuthorizationRequest, ...]:
+    checks: list[AuthorizationRequest] = []
     capability = definition.required_capability
     if capability is not None:
-        decision = evaluator.authorize(
+        checks.append(
             legacy_tool_request(
                 agent_id=agent.agent_id,
                 required_capability=capability,
             )
         )
-        if not decision.allowed:
-            return decision
     if definition.required_action is None or definition.required_resource is None:
-        return AuthorizationDecision(True, "allowed")
-    return evaluator.authorize(
+        if checks:
+            return tuple(checks)
+        return (
+            AuthorizationRequest(
+                agent_id=agent.agent_id,
+                action=TOOL_EXECUTE_ACTION,
+                resource=f"tool://{definition.schema.name}",
+            ),
+        )
+    checks.append(
         AuthorizationRequest(
             agent_id=agent.agent_id,
             action=definition.required_action,
             resource=definition.required_resource,
         )
     )
+    return tuple(checks)
+
+
+def _is_default_tool_request(
+    definition: ToolDefinition,
+    request: AuthorizationRequest,
+) -> bool:
+    return (
+        definition.required_capability is None
+        and definition.required_action is None
+        and definition.required_resource is None
+        and request.action == TOOL_EXECUTE_ACTION
+        and request.resource == f"tool://{definition.schema.name}"
+    )
+
+
+def _grant_payload(grant: CapabilityGrant) -> dict[str, JsonValue]:
+    return {
+        "subject": grant.subject,
+        "action": grant.action,
+        "resource_scope": grant.resource_scope,
+    }
