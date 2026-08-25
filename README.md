@@ -19,7 +19,7 @@ Business Tool handlers ───┘         │
 
 The model receives provider-neutral messages and `ToolSchema` values. It never receives Tool handlers, credentials, capabilities, timeouts, or mutable Session state.
 
-## V0.1 architecture
+## Architecture
 
 ```text
 User
@@ -35,6 +35,13 @@ DefaultAgentLoop
         ├── capability check
         ├── host execution
         └── structured ToolResult
+
+Session
+  ├── append-only semantic Event Log
+  ├── derive_messages()
+  └── SessionPersistence
+        ├── InMemorySessionPersistence
+        └── JsonlSessionPersistence
 ```
 
 The deterministic reference flow is:
@@ -52,6 +59,44 @@ python examples/basic_agent.py
 ```
 
 The command prints `The result is 42.` followed by the complete Session Event Log.
+
+## Durable sessions and recovery
+
+V0.2 keeps the default `Session("id")` process-local and zero-configuration. Durable callers explicitly supply a storage driver:
+
+```python
+from agentkernel import JsonlSessionPersistence, Session
+
+session = Session("session-123", JsonlSessionPersistence("sessions/session-123.jsonl"))
+# Run the Agent, then establish the explicit fsync boundary.
+session.flush()
+session.close()
+
+restored = Session.load(
+    "session-123",
+    JsonlSessionPersistence("sessions/session-123.jsonl"),
+)
+print(restored.recovery_analysis.status)
+restored.close()
+```
+
+The first JSONL line is a versioned `session/header`; every later line is a `session/event`. Loading validates the format, requested Session ID, contiguous sequence numbers, Turn/Step nesting, and Tool Call/Result relationships before reconstructing model history.
+
+Recovery results are:
+
+- `COMPLETED`: the durable prefix has no open lifecycle. This describes structural closure; `last_turn_reason` preserves the actual Turn outcome.
+- `INTERRUPTED`: the prefix is valid but has an open Turn/Step, a pending Tool Call, or a reported truncated tail.
+- `CORRUPTED`: bytes or semantic relationships are invalid; loading raises `SessionCorruptionError` carrying a corrupted analysis when replay reached the semantic validator.
+
+A final incomplete JSONL record is ignored only for analysis, with `tail_truncated` and a warning. The file is not modified and the loaded Session cannot append until an explicit future repair operation exists. A pending Tool Call is always ambiguous: V0.2 cannot know whether an external side effect occurred and never retries it automatically.
+
+Run the offline persistence/restart example:
+
+```bash
+python examples/persistent_session.py
+```
+
+The JSONL driver is single-writer only. SQLite, multi-process leases, checkpoints, automatic repair, and external side-effect reconciliation are not implemented.
 
 ## Run against an OpenAI-compatible API
 
@@ -86,10 +131,10 @@ python -m pytest
 
 ## Current stage
 
-V0.1 provides an in-memory, single-agent spine with provider-neutral protocol types, deterministic model testing, append-only Session events, derived model history, capability-bounded tools, structured failures, lifecycle hooks, process states, and hard step/tool-call budgets. An optional standard-library OpenAI-compatible adapter validates the Provider boundary without adding a Core runtime dependency.
+V0.2 first phase adds versioned InMemory/JSONL persistence, deterministic replay, strict consistency checking, crash-position analysis, and explicit durability boundaries to the V0.1 Agent Spine. The optional standard-library OpenAI-compatible adapter remains independent of persistence and adds no mandatory network dependency.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
 ## Next stage
 
-V0.2 adds Persistence + Recovery behind a `SessionPersistence` interface, beginning with JSONL and crash/replay tests. SQLite and durable side-effect reconciliation remain separate follow-up work.
+After the JSONL semantics are accepted, the next decision is either a V0.2 SQLite driver implementing the same seam or V0.3 Tool WAL/idempotency/reconciliation. Neither is part of this phase.
