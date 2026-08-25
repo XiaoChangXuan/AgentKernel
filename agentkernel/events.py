@@ -25,6 +25,11 @@ class EventType(StrEnum):
     TOOL_ABORT = "tool/abort"
     TOOL_RECONCILE = "tool/reconcile"
     TOOL_RESULT = "tool/result"
+    CONTEXT_COMPACTION_REQUESTED = "context/compaction-requested"
+    CONTEXT_COMPACTION_STARTED = "context/compaction-started"
+    CONTEXT_SUMMARY_CREATED = "context/summary-created"
+    CONTEXT_COMPACTION_COMPLETED = "context/compaction-completed"
+    CONTEXT_COMPACTION_ABORTED = "context/compaction-aborted"
     STEP_END = "step/end"
     TURN_END = "turn/end"
 

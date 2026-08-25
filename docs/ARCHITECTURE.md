@@ -1,21 +1,21 @@
-# AgentKernel V0.4 phase 1 architecture
+# AgentKernel V0.4 architecture
 
 This document describes implemented behavior. The roadmap and long-term design constraints live in [`IMPLEMENTATION_BLUEPRINT.md`](IMPLEMENTATION_BLUEPRINT.md).
 
 ## Boundary
 
-AgentKernel V0.4 phase 1 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, and deterministic management of each model request's physical Context working set. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection boundaries, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, Tool, token-estimation, and Context-policy implementations remain replaceable seams; they do not own Kernel truth.
+AgentKernel V0.4 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, and pressure-driven management of each model request's physical Context working set. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection/reclamation boundaries, complete-request accounting, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, Tool, token-estimation, Context-policy, and reclaim-policy implementations remain replaceable seams; they do not own Kernel truth.
 
 ## Modules
 
 | Module | Responsibility |
 |---|---|
 | `protocol.py` | Provider-neutral `Message`, `ToolCall`, `ToolResult`, `ToolSchema`, `ModelRequest`, and `ModelResponse` values. |
-| `events.py` | Closed event vocabulary, including Tool WAL events, and immutable `SessionEvent` envelope. |
+| `events.py` | Closed event vocabulary, including Tool WAL and durable Summary lifecycle events, and immutable `SessionEvent` envelope. |
 | `session.py` | Append-only semantic log, persistence coordination, load, and `derive_messages()` projection. |
 | `persistence.py` | Versioned header/record codec, storage errors, `SessionPersistence`, InMemory, and JSONL. |
 | `recovery.py` | Pure sequence/lifecycle/WAL validation and operation-level `RecoveryAnalysis`. |
-| `context/` | Context Page model, projection, token estimation, budget, default policy, working-set selection, pin/evict/page-in, Tool atomicity, and metrics. |
+| `context/` | Context Pages, projection, token estimation, budget, pressure/reclaim policy, deterministic pruning, durable compaction, working-set selection, Tool atomicity, and metrics. |
 | `llm.py` | Abstract `LLMService.generate()` and deterministic `ScriptedLLM`. |
 | `tool_effects.py` | Host-only effect classifications and reconciliation values. |
 | `tools.py` | Runtime definitions, schema projection, capability enforcement, timeout, handler invocation, and failure normalization. |
@@ -36,9 +36,10 @@ repeat:
   append step/start
   notify before_step
   PromptService.assemble()
-  ContextManager.build_working_set()
+  ContextManager.prepare_working_set()
     Session events → Context Pages
     ContextPolicy → temperature / priority / pin
+    pressure + ReclaimPolicy → evict / prune / compact
     budget + dependencies → Working Set
     causal projection → messages
   LLMService.generate(ModelRequest)
@@ -69,19 +70,32 @@ repeat:
 ## Context VM
 
 ```text
-Session Event Log + current host system prompt
+Durable Session Event Log (source of truth)
                   ↓
-          ContextProjector
+          Context Projection
                   ↓
             Context Pages
                   ↓
-          ContextPolicy
+       Policy / Working Set
                   ↓
-       ContextManager selection
+      Request Token Accounting
                   ↓
-       ContextWorkingSet + metrics
+          Context Pressure
+                  ↓
+              Reclaim
+       ┌──────────┼──────────┐
+    Eviction   Tool Result   Compaction
+                 Pruning
                   ↓
              ModelRequest
+                  ↓
+              Provider
+                  ↓ overflow
+            Forced Reclaim
+                  ↓
+       Rebuild Smaller Request
+                  ↓
+             Retry Once
 ```
 
 The key responsibility split is:
@@ -89,14 +103,14 @@ The key responsibility split is:
 - **Session:** what actually happened? It remains the durable, append-only source of truth.
 - **Context VM:** what should the current model Step see? It derives a disposable working set without editing history.
 
-Context VM is not long-term memory. Long-term memory would extract and recall facts across Sessions. It is not RAG; a future retriever may become one page-in source. It is not compaction; future compaction is one pressure-reclaim strategy that may create a durable, provenance-carrying summary projection. Phase 1 only evicts and pages existing information back in.
+Context VM is not long-term memory and is not RAG. Phase 2 compaction is a bounded pressure-reclaim mechanism that creates a durable, provenance-carrying derived checkpoint; it does not claim perfect recall or infinite context.
 
 ### Context Page model
 
 Each immutable `ContextPage` carries:
 
 - a Session-qualified `page_id`;
-- `kind`: `SYSTEM`, `USER_MESSAGE`, `ASSISTANT_MESSAGE`, `TOOL_RESULT`, or the reserved-but-not-produced `SUMMARY`;
+- `kind`: `SYSTEM`, `USER_MESSAGE`, `ASSISTANT_MESSAGE`, `TOOL_RESULT`, or a durable derived `SUMMARY`;
 - exact model-facing `content` and optional provider-neutral `Message`;
 - estimated `token_cost`;
 - policy fields `priority`, `temperature`, and `pinned`;
@@ -104,7 +118,7 @@ Each immutable `ContextPage` carries:
 - `trust_label`: `KERNEL`, `USER`, `TOOL`, or `EXTERNAL`;
 - `dependencies` and an optional `atomic_group`.
 
-There is no persisted `last_access`, VFS `source_uri`, `summary_of`, artifact handle, embedding, or mutable Page store in phase 1. Those fields would either create unused OS-shaped metadata or imply later subsystems that do not exist. Session-event sequence plus Session-qualified identity provides the implemented provenance.
+There is no persisted `last_access`, VFS `source_uri`, artifact handle, embedding, or mutable Page store. Raw Pages use Session-qualified event identity; Summary Pages additionally carry explicit source Page/event identities and a source fingerprint.
 
 Projection and policy are separate. `ContextProjector` deterministically maps current Session events to neutral Pages and never projects Turn/Step boundaries, Tool Calls, or `tool/prepare`, `tool/dispatch`, `tool/commit`, `tool/abort`, and `tool/reconcile`. `ContextPolicy` may change only priority, temperature, and pin status; the manager rejects a policy that changes content, identity, cost, trust, dependency, or origin.
 
@@ -118,7 +132,7 @@ available_input_tokens = max_tokens - reserved_output_tokens
 
 The explicit output reservation prevents input selection from consuming the entire advertised model window. `TokenEstimator` is a provider-neutral protocol. The built-in `ApproximateTokenEstimator` uses deterministic Unicode-code-point length divided by a configurable characters-per-token ratio, with no `tiktoken` or Provider import. Its count is an estimate, not exact model billing; deployments can inject a Provider-specific estimator later.
 
-Phase 1 prices system and message Pages. Tool schemas and Provider envelope overhead are not Pages yet, so deployments requiring a hard wire-level cap must reserve that overhead in the supplied budget.
+The estimator prices system and message Pages. Tool schemas and Provider envelope overhead are not Pages yet, so deployments requiring a hard wire-level cap must reserve that overhead in the supplied budget.
 
 ### Default policy
 
@@ -164,7 +178,99 @@ pinned_pages
 budget_tokens
 ```
 
-Phase 1 does not append `context/working-set` to Session. Selection and these metrics are deterministic projections of current events, system prompt, estimator, policy, page-in state, and budget; they are not irreducible facts about what happened. Persisting every step's Page IDs would grow the log and create a second lifecycle without improving recovery. A future reproducibility requirement may revisit this decision with an explicit request-envelope event.
+AgentKernel does not append `context/working-set` to Session. Selection and metrics are reconstructable projections. Summary generation is different: it is expensive and non-deterministic, so its provenance and commit lifecycle are durable even though the Summary remains derived data.
+
+## Context Reclamation
+
+```text
+Context VM projection
+        ↓
+ContextPressure
+        ↓
+ContextReclaimPolicy
+        ↓
+eviction → deterministic Tool Result pruning → semantic compaction
+        ↓
+rebuilt budgeted Working Set
+```
+
+The resource mechanism and action policy are separate. `ContextPressure` derives `NORMAL`, `PRESSURED`, `CRITICAL`, and `OVERFLOW` from projected tokens, selected working-set tokens, available input budget, and reserved output. The default policy maps increasing pressure to eviction, then pruning, then compaction; `DefaultAgentLoop` contains none of those branches.
+
+The invariants are strict:
+
+```text
+Eviction != deletion
+Pruning != raw Tool Result mutation
+Summary != authoritative Session truth
+Compaction != Session history rewrite
+```
+
+### Deterministic pruning
+
+Oversized Tool Result Pages are rewritten only for the model-visible projection as `head + omission marker + tail`. The tail retains late diagnostics, while provenance records the stable source Page ID, original and retained token costs, and pruning strategy. The assistant Tool Call and matching pruned Tool Result keep their existing atomic group, dependencies, message role, and call ID. The full structured Tool Result remains byte-for-byte represented by its original Session event.
+
+### Durable Summary and provenance
+
+`ContextCompactor` selects a deterministic contiguous older range, never splits an atomic group, stops across pinned/System constraints, and retains a configurable recent token tail verbatim. It calls only the provider-neutral `LLMService` with a factual handoff/checkpoint prompt. A Summary Page records source sequence bounds, leaf event sequences, immediate and original token costs, source Page identities/fingerprint, timestamp, parent Summary IDs, and optional model/provider labels.
+
+The durable lifecycle is:
+
+```text
+context/compaction-requested
+context/compaction-started
+context/summary-created
+context/compaction-completed
+```
+
+The source fingerprint is revalidated after model generation and before commit. A failure appends `context/compaction-aborted`. Replay activates a Summary only after the matching completion record. A crash with only request/start, or even an uncompleted created Summary, leaves the prior raw representation active and reports an interrupted compaction. A completed Summary replays identically after restart.
+
+### Shadow and rolling replacement
+
+A completed Summary shadows exactly its contiguous source Pages in the model-visible projection; it never removes those events from Session. Ordinary selection therefore sees the Summary instead of both Summary and source duplicates. When pressure grows again, a range containing Summary S1 plus newer old Pages may become Summary S2. S2 records S1 as a parent and replaces it in the visible projection, preventing an indefinitely growing stack of overlapping checkpoints. Raw source events remain recoverable from Session, although phase 2 does not yet expose a special API to page shadowed originals alongside their active Summary.
+
+### Metrics and overflow boundary
+
+Working-set metrics add pressure state, pruned Page count/savings, compacted Page/source costs, Summary cost, total reclaim savings, and completed compaction count. Page costs still use the configured estimator. Phase 3 separately accounts for the complete Provider request.
+
+### Provider-aware request accounting
+
+```text
+Context Pages + Tool Schemas + system prompt
+                    ↓
+             RequestTokenAccounting
+                    ↓
+       RequestTokenEstimate breakdown
+                    ↓
+              ModelRequest budget
+```
+
+`RequestTokenAccounting` is a provider-neutral adapter seam. Its deterministic fallback counts system prompt, role/content and per-message overhead, Tool Call IDs/names/JSON arguments, Tool Result messages, Tool Schema name/description/JSON parameters, and request envelope. `ModelContextLimits` carries provider, model, context window, maximum output, and output reserve. When limits are present on `LLMService`, the default loop derives `ContextBudget` from them; an explicit caller budget still wins.
+
+The fallback is stable and network-free, not exact. A Provider adapter can expose a model-specific tokenizer through the same interface without importing that SDK into Context VM. Successful `ModelResponse.usage` records Provider-reported input/output/total tokens when the wire response supplies them; semantic Session history does not persist billing telemetry.
+
+### Provider overflow recovery
+
+```text
+Session Event Log
+      ↓
+Context Projection → Working Set → request accounting → ModelRequest
+                                                       ↓
+                                                   Provider
+                                                       ↓
+                                             normalized overflow?
+                                                       ↓ yes
+                                      ContextService.force_reclaim()
+                                                       ↓
+                                      measurably smaller ModelRequest
+                                                       ↓
+                                                retry once only
+```
+
+Provider-specific status/code/message recognition belongs exclusively to the Provider adapter. Core sees `LLMErrorKind.CONTEXT_OVERFLOW`, distinct from rate limit, timeout, service unavailable, authentication, invalid request, protocol, and unknown failures.
+
+`force_reclaim()` raises pressure to `OVERFLOW` and selects against the Context policy's `target_ratio`; the loop contains no eviction/pruning/compaction thresholds. Deterministic eviction and pruning run first. If they make no progress, Context VM may attempt one ordinary durable compaction. The rebuilt request must have a strictly smaller complete-request estimate or the Kernel fails fast. A second Provider overflow becomes `ContextOverflowRecoveryError`; there is no third model call.
+
+The retry surrounds only `LLMService.generate()`. No Assistant event, Tool Call, Tool WAL record, or external handler execution occurs until a response succeeds, so overflow recovery cannot duplicate a Tool side effect. Pinned/mandatory closure remains enforced by `ContextBudgetExceeded` and is never silently discarded.
 
 ## Tool boundary
 
@@ -240,9 +346,9 @@ Outbound conversion supports:
 - function Tool Schemas containing only name, description, and parameters;
 - `tool_choice=auto` when tools are present.
 
-Inbound conversion requires a non-streaming Chat Completions response. Function arguments must be a JSON string that decodes to an object. Missing identities, invalid arguments, unsupported message content, and inconsistent finish reasons raise `OpenAICompatibleProtocolError` before the response reaches the loop. HTTP, transport, configuration, and protocol failures remain distinct, and HTTP diagnostics redact the configured API key.
+Inbound conversion requires a non-streaming Chat Completions response. Function arguments must be a JSON string that decodes to an object. Missing identities, invalid arguments, unsupported message content, and inconsistent finish reasons raise `OpenAICompatibleProtocolError` before the response reaches the loop. HTTP errors are normalized at this boundary into context overflow, rate limit, timeout, authentication, unavailable, invalid request, or unknown. HTTP diagnostics redact the configured API key.
 
-The current AgentKernel Protocol already preserves the semantic information required for basic Tool Calling: assistant Tool Calls carry stable call IDs, and each Tool Result becomes a tool message carrying the same ID. Successful Provider diagnostics such as request ID, model echo, and token usage are deliberately not added to the semantic protocol yet because V0.1 does not consume them.
+The AgentKernel Protocol preserves the semantic information required for basic Tool Calling: assistant Tool Calls carry stable call IDs, and each Tool Result becomes a tool message carrying the same ID. Phase 3 adds optional provider-neutral token usage to `ModelResponse` for benchmark/accounting diagnostics; request IDs and model echoes remain outside semantic Session history.
 
 ## Durable Session
 
@@ -315,4 +421,4 @@ These are reconstructed mechanism facts, not policy choices. `DurableToolExecuto
 
 ## Deliberately deferred
 
-V0.4 phase 1 has no Summary generation, semantic retrieval, RAG, embeddings, long-term memory, DeepSeek-style surface replacement, Tool Result pruning, VFS/artifact handles, infinite context, SQLite, multi-process writer/lease, repair API, checkpoint/snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, prompt-injection classifier, or Provider-specific retry layer.
+V0.4 phase 3 has no semantic retrieval, RAG, embeddings, long-term memory, full DeepSeek-style Surface subsystem, VFS/artifact handles, infinite context, SQLite, multi-process writer/lease, repair API, snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, prompt-injection classifier, complex model registry, multi-Provider fallback, or bundled exact Provider tokenizer.

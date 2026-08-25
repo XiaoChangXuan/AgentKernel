@@ -14,6 +14,7 @@ from agentkernel import (
     Agent,
     DefaultAgentLoop,
     EventType,
+    LLMErrorKind,
     ModelRequest,
     PromptService,
     Session,
@@ -328,6 +329,24 @@ def test_configuration_repr_does_not_expose_api_key() -> None:
     assert secret not in repr(config)
 
 
+def test_configured_model_context_limits_are_exposed_provider_neutrally() -> None:
+    provider = OpenAICompatibleLLM(
+        OpenAICompatibleConfig(
+            base_url="http://127.0.0.1:8000/v1",
+            model="test-model",
+            context_window_tokens=32_000,
+            max_output_tokens=4_000,
+            output_reserve_tokens=2_000,
+        )
+    )
+
+    assert provider.context_limits is not None
+    assert provider.context_limits.context_window_tokens == 32_000
+    assert provider.context_limits.max_output_tokens == 4_000
+    assert provider.context_limits.output_reserve_tokens == 2_000
+    assert provider.context_limits.supports_exact_token_count is False
+
+
 def test_http_error_redacts_api_key() -> None:
     secret = "super-secret-value"
     with fake_chat_api(
@@ -343,3 +362,53 @@ def test_http_error_redacts_api_key() -> None:
     assert captured.value.status == 401
     assert secret not in str(captured.value)
     assert "***" in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "expected"),
+    [
+        (
+            400,
+            {"code": "context_length_exceeded", "message": "request rejected"},
+            LLMErrorKind.CONTEXT_OVERFLOW,
+        ),
+        (429, {"message": "slow down"}, LLMErrorKind.RATE_LIMIT),
+        (503, {"message": "unavailable"}, LLMErrorKind.SERVICE_UNAVAILABLE),
+        (400, {"message": "invalid field"}, LLMErrorKind.INVALID_REQUEST),
+    ],
+)
+def test_http_errors_are_normalized_at_provider_boundary(
+    status: int,
+    error: dict[str, object],
+    expected: LLMErrorKind,
+) -> None:
+    with fake_chat_api((status, {"error": error})) as server:
+        with pytest.raises(OpenAICompatibleHTTPError) as captured:
+            asyncio.run(
+                provider_for(server).generate(
+                    ModelRequest(messages=(Message.user("Hello"),))
+                )
+            )
+
+    assert captured.value.kind is expected
+
+
+def test_provider_usage_is_exposed_without_changing_response_semantics() -> None:
+    payload = final_response("done")
+    payload["usage"] = {
+        "prompt_tokens": 120,
+        "completion_tokens": 8,
+        "total_tokens": 128,
+    }
+    with fake_chat_api(payload) as server:
+        response = asyncio.run(
+            provider_for(server).generate(
+                ModelRequest(messages=(Message.user("Hello"),))
+            )
+        )
+
+    assert response.content == "done"
+    assert response.usage is not None
+    assert response.usage.input_tokens == 120
+    assert response.usage.output_tokens == 8
+    assert response.usage.total_tokens == 128

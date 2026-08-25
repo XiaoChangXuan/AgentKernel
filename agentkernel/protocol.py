@@ -256,12 +256,30 @@ class ModelRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelUsage:
+    """Provider-reported token usage for one successful response."""
+
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+    def __post_init__(self) -> None:
+        for name in ("input_tokens", "output_tokens", "total_tokens"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if self.total_tokens < self.input_tokens + self.output_tokens:
+            raise ValueError("total_tokens cannot be below input plus output tokens")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelResponse:
     """Provider-neutral response consumed by the default loop."""
 
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     finish_reason: FinishReason | None = None
+    usage: ModelUsage | None = None
 
     def __post_init__(self) -> None:
         expected = FinishReason.TOOL_CALLS if self.tool_calls else FinishReason.STOP

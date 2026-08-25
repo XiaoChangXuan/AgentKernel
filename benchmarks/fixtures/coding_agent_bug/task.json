@@ -1,0 +1,7 @@
+{
+  "task": "Fix divide so fractional results are preserved, without changing zero-division behavior.",
+  "constraint": "Do not remove or weaken the zero-division guard.",
+  "test_command": "python -m pytest -q",
+  "expected_initial_result": "failed",
+  "expected_final_result": "passed"
+}

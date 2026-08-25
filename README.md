@@ -32,8 +32,13 @@ DefaultAgentLoop
   ├── ContextManager
   │     ├── ContextProjector ──> Context Pages
   │     ├── ContextPolicy
-  │     └── budgeted Working Set ──> ModelRequest
+  │     ├── ContextPressure + ReclaimPolicy
+  │     ├── deterministic ToolResultPruner
+  │     ├── durable ContextCompactor
+  │     ├── budgeted Working Set ──> ModelRequest
+  │     └── provider-aware request token accounting
   ├── LLMService / ScriptedLLM
+  │     └── normalized context overflow ──> forced reclaim ──> retry once
   └── ToolRegistry
         ├── model schema projection
         ├── capability check
@@ -136,9 +141,11 @@ The Kernel generates `operation_id` separately from the model's `tool_call_id` a
 
 This is durable, recoverable side-effect execution—not a universal exactly-once guarantee. Effectively-once behavior is possible only when the external system honors stable idempotency or provides reliable reconciliation.
 
-## Context VM phase 1
+## Context VM
 
-V0.4 introduces deterministic working-set based context selection. The durable Session still answers “what happened”; Context VM answers “what should this model Step see now?”
+Agent 的完整信息量可以超过模型当前的上下文窗口；V0.4 Context VM 让 Kernel 管理当前模型请求中应该驻留哪些信息。持久 Session 回答“实际发生了什么”，Context VM 回答“当前模型 Step 应该看到什么”。
+
+核心机制是：上下文页面（Context Page）承载模型可见的信息单元；当前工作集（Working Set）受请求预算约束；固定重要上下文（Pinning）避免关键页面被静默移除；上下文淘汰（Eviction）只移出当前请求，按需重新换入（Page-In）可在后续请求恢复页面。上下文压力（Context Pressure）触发工具结果裁剪（Tool Result Pruning）或旧历史压缩（Compaction），摘要来源追踪（Summary Provenance）保留派生关系。请求级 Token 计量（Provider-aware Token Accounting）覆盖完整请求，真实 Provider 上下文超限后的受控恢复（Overflow Recovery）只允许重建更小请求并重试一次。
 
 ```text
 Session Event Log
@@ -170,7 +177,63 @@ The default policy pins the system prompt and current user input, favors current
 
 Eviction is not deletion. Original events and full Tool Results remain in Session. `request_page(page_id)` performs an explicit one-working-set page-in, while `pin()` and `unpin()` provide mechanism-level residency controls. If mandatory Pages and their dependencies exceed the input budget, selection raises `ContextBudgetExceeded` instead of silently dropping them.
 
-Phase 1 performs no summarization, pruning, semantic retrieval, RAG, or long-term memory. It does not provide infinite context.
+### V0.4 phase 2: context reclamation
+
+`ContextManager.prepare_working_set()` extends phase 1 with an ordered reclaim pipeline:
+
+```text
+full projection → working-set eviction → deterministic Tool Result pruning
+                → durable semantic compaction → rebuilt Working Set
+```
+
+`ContextPressure` derives `NORMAL`, `PRESSURED`, `CRITICAL`, or `OVERFLOW` from projected/selected token estimates, the input budget, and reserved output. A replaceable reclaim policy chooses mechanisms; the default prefers cheap deterministic eviction, then head/omission/tail pruning, and invokes the existing provider-neutral `LLMService` for compaction only at overflow.
+
+Pruning changes only the model-visible Tool Result Page and retains its source Page ID, original/retained cost, strategy, and error-rich tail. Compaction replaces an atomic-safe older Page range with one durable Summary Page while keeping a configurable recent tail verbatim. Every summary records its source event/Page identities, range, costs, fingerprint, timestamp, parent summary, and optional model/provider metadata. Completed summaries shadow their source Pages only in the model-visible projection; raw Session events and full Tool Results are never deleted or rewritten.
+
+The summary lifecycle (`requested → started → summary created → completed`) is append-only and replay-validated. Only a completed summary becomes visible after restart. Rolling compaction can replace a prior checkpoint plus newer old history with one successor checkpoint.
+
+This is bounded, lossy context reclamation—not infinite context, lossless summarization, perfect memory, RAG, or long-term memory.
+
+Run the offline 200-turn comparison:
+
+```bash
+python -m examples.context_reclamation_benchmark
+```
+
+### V0.4 phase 3: provider-aware accounting and overflow recovery
+
+`RequestTokenAccounting` estimates the complete `ModelRequest`, not only Page text. The deterministic fallback reports separate costs for system prompt, messages (including Tool Calls and Tool Results), Tool Schemas, and provider envelope. `ModelContextLimits` carries a lightweight provider/model context window, maximum output, and recommended output reserve without creating a model registry. Provider adapters may replace the fallback with an exact tokenizer; Context VM never imports a Provider SDK.
+
+No estimator is guaranteed to equal every Provider's final billing or hidden envelope. A normalized Provider context overflow is therefore the final safety boundary:
+
+```text
+ModelRequest → Provider CONTEXT_OVERFLOW
+             → ContextService.force_reclaim()
+             → rebuild a measurably smaller request
+             → retry exactly once
+```
+
+The adapter classifies overflow separately from rate limit, timeout, authentication, unavailable service, and ordinary invalid requests. Provider-specific strings stay at that boundary. The loop owns only the one-retry guard; eviction, pruning, compaction, safety target, and pinned-Page enforcement remain Context VM policy. Reclaim failure, no measurable reduction, or a second overflow raises `ContextOverflowRecoveryError` without a third call. Because retry completes before an Assistant event or Tool Call is appended, it cannot replay a durable Tool side effect.
+
+Run the default network-free Phase 3 resource/quality benchmark:
+
+```bash
+python -m benchmarks.context_real_provider_benchmark
+```
+
+It compares Full History, Phase 1 eviction, and Phase 2/3 reclamation across early-constraint, middle-decision, and large-Tool-tail cases. Real API execution is never part of pytest and requires all three `AGENTKERNEL_LLM_*` variables plus `AGENTKERNEL_RUN_REAL_BENCHMARK=1`. API keys are neither committed nor printed. A small isolated coding fixture and runner seam are available through `python -m benchmarks.coding_fixture_runner`; full Shell Agent orchestration remains out of scope.
+
+### V0.4 Context VM benchmark
+
+同一个真实 OpenAI-compatible Provider 模型上的三个上下文质量案例得到：
+
+| Mode | Final Input Tokens | Cases Passed |
+|---|---:|---:|
+| Full History | 13,668 | 3/3 |
+| Phase 1 | 5,605 | 2/3 |
+| Phase 2/3 | 2,978 | 3/3 |
+
+Phase 2/3 的最终请求输入比 Full History 少约 78.2%。第一次压缩还要生成 Summary，因此首次压缩轮总输入为 6,292 tokens；该一次性成本没有计入上表的稳态/最终请求列。三个案例只检查早期约束、中段决策和大型工具输出尾部错误能否保留，不代表广泛的 Coding Agent 成功率。完整方法与逐案例结果见 [`benchmarks/RESULTS.md`](benchmarks/RESULTS.md)。
 
 ## Run against an OpenAI-compatible API
 
@@ -205,10 +268,10 @@ python -m pytest
 
 ## Current stage
 
-V0.4 phase 1 adds deterministic Context Page projection, configurable token estimation, reserved-output-aware input budgets, replaceable policy, working-set selection, pin/evict/page-in, Tool protocol atomicity, causal ordering, structured metrics, and JSONL restart consistency. V0.3 Durable Tool Execution remains unchanged underneath it. All tests and examples are offline by default; the optional OpenAI-compatible adapter remains independent and adds no mandatory network dependency.
+V0.4 adds complete-request token accounting, optional model limits, Provider-boundary failure normalization, and one-shot overflow recovery on top of pruning, durable compaction, and working-set selection. V0.3 Durable Tool Execution remains intact underneath it. All tests and benchmarks are offline by default.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior, [`docs/V0.4_RELEASE.md`](docs/V0.4_RELEASE.md) for the release summary, and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
 ## Next stage
 
-The next decision is among V0.4 phase 2 compaction/summary/tool-result pruning, V0.5 virtual resources and artifact handles, or a SQLite persistence driver. None is part of phase 1.
+V0.5 candidate: Virtual Resource / Artifact Handle. It is not implemented as part of V0.4.

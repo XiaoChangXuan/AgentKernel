@@ -83,6 +83,8 @@ class RecoveryAnalysis:
     durable_operations: tuple[DurableOperationRecovery, ...] = ()
     warnings: tuple[str, ...] = ()
     corruption: str | None = None
+    active_compaction_id: str | None = None
+    completed_compaction_ids: tuple[str, ...] = ()
 
     @property
     def has_ambiguous_tool_outcomes(self) -> bool:
@@ -128,6 +130,10 @@ def analyze_recovery(
     last_turn_reason: str | None = None
     last_type: EventType | None = None
     last_seq = 0
+    requested_compactions: dict[str, dict[str, JsonValue]] = {}
+    active_compaction_id: str | None = None
+    created_summaries: dict[str, dict[str, JsonValue]] = {}
+    completed_compaction_ids: list[str] = []
 
     def fail(message: str) -> NoReturn:
         analysis = RecoveryAnalysis(
@@ -143,6 +149,8 @@ def analyze_recovery(
             tail_truncated=tail_truncated,
             durable_operations=_freeze_operations(operations),
             corruption=message,
+            active_compaction_id=active_compaction_id,
+            completed_compaction_ids=tuple(completed_compaction_ids),
         )
         raise SessionCorruptionError(message, analysis=analysis)
 
@@ -394,6 +402,80 @@ def analyze_recovery(
             completed_calls.append(call_id)
             continue
 
+        if event.type is EventType.CONTEXT_COMPACTION_REQUESTED:
+            compaction_id = _non_empty_string(data, "compaction_id", fail)
+            if compaction_id in requested_compactions:
+                fail(f"duplicate context compaction_id: {compaction_id}")
+            _validate_compaction_identity(data, fail)
+            requested_compactions[compaction_id] = copy.deepcopy(dict(data))
+            continue
+
+        if event.type is EventType.CONTEXT_COMPACTION_STARTED:
+            compaction_id = _non_empty_string(data, "compaction_id", fail)
+            requested = requested_compactions.get(compaction_id)
+            if requested is None:
+                fail("context compaction start requires a preceding request")
+            if active_compaction_id is not None:
+                fail("context compaction start cannot overlap an active compaction")
+            _validate_compaction_identity(data, fail)
+            _require_compaction_identity_match(requested, data, fail)
+            active_compaction_id = compaction_id
+            continue
+
+        if event.type is EventType.CONTEXT_SUMMARY_CREATED:
+            compaction_id = _non_empty_string(data, "compaction_id", fail)
+            if compaction_id != active_compaction_id:
+                fail("context summary requires its active compaction")
+            if compaction_id in created_summaries:
+                fail("context compaction cannot create multiple summaries")
+            requested = requested_compactions[compaction_id]
+            _validate_compaction_identity(data, fail)
+            _require_compaction_identity_match(requested, data, fail)
+            _non_empty_string(data, "content", fail)
+            summary_tokens = _non_negative_int(data, "summary_token_cost", fail)
+            source_tokens = _non_negative_int(data, "source_token_cost", fail)
+            if summary_tokens >= source_tokens:
+                fail("context summary must be smaller than its source")
+            created_at = data.get("created_at")
+            if (
+                isinstance(created_at, bool)
+                or not isinstance(created_at, (int, float))
+            ):
+                fail("context summary created_at must be a finite number")
+            import math
+
+            if not math.isfinite(float(created_at)):
+                fail("context summary created_at must be a finite number")
+            for optional in ("provider", "model"):
+                if optional in data:
+                    _non_empty_string(data, optional, fail)
+            created_summaries[compaction_id] = copy.deepcopy(dict(data))
+            continue
+
+        if event.type is EventType.CONTEXT_COMPACTION_COMPLETED:
+            compaction_id = _non_empty_string(data, "compaction_id", fail)
+            if compaction_id != active_compaction_id:
+                fail("context compaction completion requires its active start")
+            summary = created_summaries.get(compaction_id)
+            if summary is None:
+                fail("context compaction completion requires a durable summary")
+            if data.get("summary_page_id") != summary.get("summary_page_id"):
+                fail("context compaction completion summary_page_id mismatch")
+            if data.get("source_fingerprint") != summary.get("source_fingerprint"):
+                fail("context compaction completion source_fingerprint mismatch")
+            completed_compaction_ids.append(compaction_id)
+            active_compaction_id = None
+            continue
+
+        if event.type is EventType.CONTEXT_COMPACTION_ABORTED:
+            compaction_id = _non_empty_string(data, "compaction_id", fail)
+            if compaction_id != active_compaction_id:
+                fail("context compaction abort requires its active start")
+            _non_empty_string(data, "error_type", fail)
+            _non_empty_string(data, "message", fail)
+            active_compaction_id = None
+            continue
+
         if event.type is EventType.STEP_END:
             _require_step(data, active_turn, active_step, fail)
             if pending_calls:
@@ -439,6 +521,7 @@ def analyze_recovery(
         or active_step is not None
         or bool(pending_calls)
         or unresolved_operations
+        or active_compaction_id is not None
     )
     return RecoveryAnalysis(
         status=SessionStatus.INTERRUPTED if interrupted else SessionStatus.COMPLETED,
@@ -453,6 +536,8 @@ def analyze_recovery(
         tail_truncated=tail_truncated,
         durable_operations=durable_operations,
         warnings=warnings,
+        active_compaction_id=active_compaction_id,
+        completed_compaction_ids=tuple(completed_compaction_ids),
     )
 
 
@@ -465,6 +550,81 @@ def _positive_int(
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         fail(f"event {name} must be a positive integer")
     return value
+
+
+def _non_negative_int(
+    data: Mapping[str, JsonValue],
+    name: str,
+    fail: Callable[[str], NoReturn],
+) -> int:
+    value = data.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        fail(f"event {name} must be a non-negative integer")
+    return value
+
+
+def _validate_compaction_identity(
+    data: Mapping[str, JsonValue],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    _non_empty_string(data, "compaction_id", fail)
+    _non_empty_string(data, "summary_page_id", fail)
+    start = _positive_int(data, "source_start_seq", fail)
+    end = _positive_int(data, "source_end_seq", fail)
+    if end < start:
+        fail("context compaction source range must be ordered")
+    page_ids = data.get("source_page_ids")
+    if (
+        not isinstance(page_ids, list)
+        or not page_ids
+        or any(not isinstance(item, str) or not item for item in page_ids)
+        or len(set(page_ids)) != len(page_ids)
+    ):
+        fail("context compaction source_page_ids must be non-empty and unique")
+    event_seqs = data.get("source_event_seqs")
+    if (
+        not isinstance(event_seqs, list)
+        or not event_seqs
+        or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 1
+            for item in event_seqs
+        )
+        or len(set(event_seqs)) != len(event_seqs)
+    ):
+        fail("context compaction source_event_seqs must be positive and unique")
+    source_tokens = _non_negative_int(data, "source_token_cost", fail)
+    original_tokens = _non_negative_int(data, "original_source_token_cost", fail)
+    if original_tokens < source_tokens:
+        fail("context compaction original source cost cannot be below source cost")
+    _non_empty_string(data, "source_fingerprint", fail)
+    parent_ids = data.get("parent_summary_page_ids")
+    if (
+        not isinstance(parent_ids, list)
+        or any(not isinstance(item, str) or not item for item in parent_ids)
+        or len(set(parent_ids)) != len(parent_ids)
+    ):
+        fail("context compaction parent_summary_page_ids must be unique strings")
+
+
+def _require_compaction_identity_match(
+    requested: Mapping[str, JsonValue],
+    current: Mapping[str, JsonValue],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    for name in (
+        "compaction_id",
+        "summary_page_id",
+        "source_start_seq",
+        "source_end_seq",
+        "source_page_ids",
+        "source_event_seqs",
+        "source_token_cost",
+        "original_source_token_cost",
+        "source_fingerprint",
+        "parent_summary_page_ids",
+    ):
+        if current.get(name) != requested.get(name):
+            fail(f"context compaction identity changed at {name}")
 
 
 def _non_empty_string(

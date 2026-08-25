@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from urllib.request import Request as HTTPRequest
 from urllib.request import urlopen
 
-from ..llm import LLMService
+from ..llm import LLMErrorKind, LLMService, LLMServiceError
 from ..protocol import (
     FinishReason,
     JsonValue,
@@ -21,9 +21,15 @@ from ..protocol import (
     MessageRole,
     ModelRequest,
     ModelResponse,
+    ModelUsage,
     ToolCall,
     ToolSchema,
     is_json_value,
+)
+from ..token_accounting import (
+    ApproximateRequestTokenAccounting,
+    ModelContextLimits,
+    RequestTokenAccounting,
 )
 
 _BASE_URL_ENV = "AGENTKERNEL_LLM_BASE_URL"
@@ -33,8 +39,17 @@ _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_ERROR_DETAIL_CHARS = 1_000
 
 
-class OpenAICompatibleError(RuntimeError):
+class OpenAICompatibleError(LLMServiceError):
     """Base class for safe Provider-boundary failures."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: LLMErrorKind = LLMErrorKind.UNKNOWN,
+        status: int | None = None,
+    ) -> None:
+        super().__init__(kind, message, status=status)
 
 
 class OpenAICompatibleConfigurationError(OpenAICompatibleError):
@@ -44,18 +59,28 @@ class OpenAICompatibleConfigurationError(OpenAICompatibleError):
 class OpenAICompatibleTransportError(OpenAICompatibleError):
     """The HTTP request could not reach or read the configured service."""
 
+    def __init__(self, message: str, *, kind: LLMErrorKind) -> None:
+        super().__init__(message, kind=kind)
+
 
 class OpenAICompatibleHTTPError(OpenAICompatibleError):
     """The service returned a non-successful HTTP response."""
 
-    def __init__(self, status: int, detail: str) -> None:
+    def __init__(self, status: int, detail: str, *, kind: LLMErrorKind) -> None:
         self.status = status
         self.detail = detail
-        super().__init__(f"OpenAI-compatible API returned HTTP {status}: {detail}")
+        super().__init__(
+            f"OpenAI-compatible API returned HTTP {status}: {detail}",
+            kind=kind,
+            status=status,
+        )
 
 
 class OpenAICompatibleProtocolError(OpenAICompatibleError):
     """The service response did not satisfy the supported wire contract."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, kind=LLMErrorKind.PROTOCOL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +91,9 @@ class OpenAICompatibleConfig:
     model: str
     api_key: str | None = field(default=None, repr=False)
     timeout_seconds: float = 60.0
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
+    output_reserve_tokens: int | None = None
 
     def __post_init__(self) -> None:
         base_url = self.base_url.strip().rstrip("/")
@@ -91,6 +119,26 @@ class OpenAICompatibleConfig:
         if self.timeout_seconds <= 0:
             raise OpenAICompatibleConfigurationError(
                 "OpenAI-compatible timeout_seconds must be positive"
+            )
+        optional_limits = (
+            self.context_window_tokens,
+            self.max_output_tokens,
+            self.output_reserve_tokens,
+        )
+        if any(value is not None for value in optional_limits) and any(
+            value is None for value in optional_limits
+        ):
+            raise OpenAICompatibleConfigurationError(
+                "context_window_tokens, max_output_tokens, and "
+                "output_reserve_tokens must be configured together"
+            )
+        if self.context_window_tokens is not None:
+            ModelContextLimits(
+                provider="openai-compatible",
+                model=model,
+                context_window_tokens=self.context_window_tokens,
+                max_output_tokens=self.max_output_tokens,  # type: ignore[arg-type]
+                output_reserve_tokens=self.output_reserve_tokens,  # type: ignore[arg-type]
             )
         object.__setattr__(self, "base_url", base_url)
         object.__setattr__(self, "model", model)
@@ -134,6 +182,26 @@ class OpenAICompatibleLLM(LLMService):
 
     def __init__(self, config: OpenAICompatibleConfig) -> None:
         self._config = config
+        self._token_accounting = ApproximateRequestTokenAccounting(
+            provider="openai-compatible",
+            model=config.model,
+        )
+
+    @property
+    def token_accounting(self) -> RequestTokenAccounting:
+        return self._token_accounting
+
+    @property
+    def context_limits(self) -> ModelContextLimits | None:
+        if self._config.context_window_tokens is None:
+            return None
+        return ModelContextLimits(
+            provider="openai-compatible",
+            model=self._config.model,
+            context_window_tokens=self._config.context_window_tokens,
+            max_output_tokens=self._config.max_output_tokens,  # type: ignore[arg-type]
+            output_reserve_tokens=self._config.output_reserve_tokens,  # type: ignore[arg-type]
+        )
 
     async def generate(self, request: ModelRequest) -> ModelResponse:
         """Execute one non-streaming Chat Completions request."""
@@ -167,11 +235,19 @@ class OpenAICompatibleLLM(LLMService):
         except HTTPError as error:
             raw_error = error.read(_MAX_RESPONSE_BYTES + 1)
             detail = _http_error_detail(raw_error, self._config.api_key)
-            raise OpenAICompatibleHTTPError(error.code, detail) from error
-        except (TimeoutError, URLError, OSError) as error:
+            kind = _classify_http_error(error.code, raw_error)
+            raise OpenAICompatibleHTTPError(error.code, detail, kind=kind) from error
+        except (TimeoutError, asyncio.TimeoutError) as error:
             detail = _redact(str(error), self._config.api_key)
             raise OpenAICompatibleTransportError(
-                f"OpenAI-compatible request failed: {detail}"
+                f"OpenAI-compatible request failed: {detail}",
+                kind=LLMErrorKind.TIMEOUT,
+            ) from error
+        except (URLError, OSError) as error:
+            detail = _redact(str(error), self._config.api_key)
+            raise OpenAICompatibleTransportError(
+                f"OpenAI-compatible request failed: {detail}",
+                kind=LLMErrorKind.SERVICE_UNAVAILABLE,
             ) from error
         try:
             payload = json.loads(raw.decode("utf-8"))
@@ -296,6 +372,30 @@ def _parse_response(payload: object) -> ModelResponse:
         content=content,
         tool_calls=calls,
         finish_reason=FinishReason.TOOL_CALLS if calls else FinishReason.STOP,
+        usage=_parse_usage(root.get("usage")),
+    )
+
+
+def _parse_usage(value: object) -> ModelUsage | None:
+    if value is None:
+        return None
+    usage = _require_mapping(value, "response.usage")
+    prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
+    completion = usage.get("completion_tokens", usage.get("output_tokens"))
+    total = usage.get("total_tokens")
+    for name, item in (
+        ("input tokens", prompt),
+        ("output tokens", completion),
+        ("total tokens", total),
+    ):
+        if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+            raise OpenAICompatibleProtocolError(
+                f"OpenAI-compatible usage {name} must be a non-negative integer"
+            )
+    return ModelUsage(
+        input_tokens=prompt,
+        output_tokens=completion,
+        total_tokens=total,
     )
 
 
@@ -367,6 +467,62 @@ def _http_error_detail(raw: bytes, api_key: str | None) -> str:
         detail = message if isinstance(message, str) else text
     detail = " ".join(detail.split())[:_MAX_ERROR_DETAIL_CHARS] or "no error detail"
     return _redact(detail, api_key)
+
+
+_CONTEXT_ERROR_CODES = {
+    "context_length_exceeded",
+    "context_window_exceeded",
+    "input_too_long",
+    "prompt_too_long",
+    "too_many_tokens",
+}
+_CONTEXT_ERROR_PATTERNS = (
+    "context length exceeded",
+    "context window exceeded",
+    "exceeds the context window",
+    "maximum context length",
+    "prompt is too long",
+    "input is too long",
+    "input tokens exceed",
+    "input length and",
+    "request too large",
+    "too many tokens",
+)
+
+
+def _classify_http_error(status: int, raw: bytes) -> LLMErrorKind:
+    """Normalize only at the adapter boundary; callers never parse provider text."""
+
+    if status in {401, 403}:
+        return LLMErrorKind.AUTHENTICATION
+    if status == 408:
+        return LLMErrorKind.TIMEOUT
+    if status == 429:
+        return LLMErrorKind.RATE_LIMIT
+    if status >= 500:
+        return LLMErrorKind.SERVICE_UNAVAILABLE
+    code = ""
+    message = raw.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(message)
+    except json.JSONDecodeError:
+        pass
+    else:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            raw_code = error.get("code", error.get("type", ""))
+            code = str(raw_code).strip().lower()
+            raw_message = error.get("message")
+            if isinstance(raw_message, str):
+                message = raw_message
+    lowered = message.lower()
+    if code in _CONTEXT_ERROR_CODES or any(
+        pattern in lowered for pattern in _CONTEXT_ERROR_PATTERNS
+    ):
+        return LLMErrorKind.CONTEXT_OVERFLOW
+    if 400 <= status < 500:
+        return LLMErrorKind.INVALID_REQUEST
+    return LLMErrorKind.UNKNOWN
 
 
 def _redact(value: str, api_key: str | None) -> str:

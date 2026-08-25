@@ -500,59 +500,78 @@ tool/abort
 
 不要从“Memory VectorDB”开始。
 
-先实现：
+已实现的数据流：
 
 ```text
 Raw Session Log
-      ↓
-Surface
       ↓
 Context Pages
       ↓
 Working Set Policy
       ↓
+Pressure / Reclaim Policy
+      ↓
+Eviction → Tool Result Pruning → Durable Compaction
+      ↓
 Model Context
 ```
 
-## ContextPage
+## Phase 1：Context Page / Working Set（已完成）
 
-计划字段：
+当前 `ContextPage` 的核心字段：
 
 ```text
 page_id
 kind
-source_uri
 token_cost
 priority
 temperature: hot/warm/cold
 pinned
 trust_label
-last_access
 dependencies
-summary_of
+atomic_group
+created_seq / turn
 ```
 
-## Context policy
+实现：
 
-动作：
-- pin
-- evict
-- summarize
-- spill
-- page_in
+- deterministic Event → Page projection
+- reserved-output-aware input budget
+- replaceable selection policy
+- pin / evict / page-in
+- Tool Call / Tool Result atomic closure
+- causal message ordering
+
+## Phase 2：Context Reclamation（已完成）
+
+动作顺序：
+
+- eviction
+- deterministic Tool Result head/marker/tail pruning
+- retained-tail semantic compaction through `LLMService`
+- completed Summary shadow/replacement
+- rolling Summary checkpoint
+
+硬不变量：
+
+- Raw Session Event 永远是事实来源；
+- pruning 不修改 durable Tool Result；
+- Summary 是带 provenance 的 durable derived representation，不是真相；
+- compaction 不切分 Tool atomic group，默认不压缩 pinned Page；
+- 只有完成 lifecycle 的 Summary 才能在 replay 后生效。
+
+Phase 2 没有实现 RAG、Memory、VFS、Provider overflow retry 或精确 Provider tokenizer。
+
+## 后续 Context policy
+
+未来可以加入 spill/resource handle 和 demand retrieval，但属于 V0.5+，不能回写或删除 Raw Session Log。
 
 参考：
 - DeepSeek Session Surface/Compaction
 - Linux virtual memory
 - working set / page cache
 
-第一版策略可以简单：
-1. Kernel/system policy 永久 pinned
-2. current goal pinned
-3. recent interaction hot
-4. tool large result handle 化
-5. old history compact
-6. demand retrieval
+当前默认策略：Kernel/system 和当前 user pinned，近期交互 hot，大型/旧 Tool group cold；压力升高时先 deterministic reclaim，再调用模型压缩 older range。
 
 ---
 

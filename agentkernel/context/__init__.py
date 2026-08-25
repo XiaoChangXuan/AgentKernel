@@ -1,5 +1,11 @@
-"""Public Context VM phase 1 API."""
+"""Public Context VM API."""
 
+from .compaction import (
+    CompactionRange,
+    ContextCompactionConfig,
+    ContextCompactionResult,
+    ContextCompactor,
+)
 from .manager import ContextManager, ContextService
 from .model import (
     ContextBudget,
@@ -9,18 +15,42 @@ from .model import (
     ContextPageKind,
     ContextPageNotFound,
     ContextProtocolError,
+    ContextPressureState,
     ContextTemperature,
     ContextTrustLabel,
     ContextWorkingSet,
+    SummaryProvenance,
+    ToolResultPruning,
 )
 from .policy import ContextPolicy, ContextPolicyConfig, DefaultContextPolicy
 from .projector import ContextProjector
-from .tokens import ApproximateTokenEstimator, TokenEstimator
+from .pressure import (
+    ContextPressure,
+    ContextPressureConfig,
+    ContextReclaimAction,
+    ContextReclaimPolicy,
+    DefaultContextReclaimPolicy,
+    assess_context_pressure,
+)
+from .pruning import ToolResultPruner, ToolResultPrunerConfig
+from .tokens import (
+    ApproximateRequestTokenAccounting,
+    ApproximateTokenEstimator,
+    ModelContextLimits,
+    RequestTokenAccounting,
+    RequestTokenEstimate,
+    TokenEstimator,
+)
 
 __all__ = [
     "ApproximateTokenEstimator",
+    "ApproximateRequestTokenAccounting",
     "ContextBudget",
     "ContextBudgetExceeded",
+    "CompactionRange",
+    "ContextCompactionConfig",
+    "ContextCompactionResult",
+    "ContextCompactor",
     "ContextManager",
     "ContextMetrics",
     "ContextPage",
@@ -30,10 +60,24 @@ __all__ = [
     "ContextPolicyConfig",
     "ContextProjector",
     "ContextProtocolError",
+    "ContextPressure",
+    "ContextPressureConfig",
+    "ContextPressureState",
+    "ContextReclaimAction",
+    "ContextReclaimPolicy",
     "ContextService",
     "ContextTemperature",
     "ContextTrustLabel",
     "ContextWorkingSet",
     "DefaultContextPolicy",
+    "DefaultContextReclaimPolicy",
+    "ModelContextLimits",
+    "RequestTokenAccounting",
+    "RequestTokenEstimate",
+    "SummaryProvenance",
     "TokenEstimator",
+    "ToolResultPruner",
+    "ToolResultPrunerConfig",
+    "ToolResultPruning",
+    "assess_context_pressure",
 ]
