@@ -18,6 +18,8 @@ def test_context_benchmark_offline_is_deterministic_and_network_free() -> None:
     assert first["quality"] == second["quality"]
     for row in first["resource_metrics"]:
         assert row["actual_input_tokens"] is None
+        assert row["total_actual_input_tokens"] is None
+        assert row["summary_actual_input_tokens"] is None
         assert row["request_estimated_tokens"] > 0
     phase23 = [
         row for row in first["resource_metrics"] if row["mode"] == "phase23"

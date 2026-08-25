@@ -58,6 +58,41 @@ class EvictionOnlyPolicy:
         return (ContextReclaimAction.EVICT,)
 
 
+class UsageTrackingLLM(LLMService):
+    """Observe benchmark-only call/usage totals without changing the adapter."""
+
+    def __init__(self, delegate: LLMService) -> None:
+        self.delegate = delegate
+        self.calls = 0
+        self.overflows = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    @property
+    def token_accounting(self):  # type: ignore[no-untyped-def]
+        return self.delegate.token_accounting
+
+    @property
+    def context_limits(self):  # type: ignore[no-untyped-def]
+        return self.delegate.context_limits
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        self.calls += 1
+        try:
+            response = await self.delegate.generate(request)
+        except LLMServiceError as error:
+            if error.kind is LLMErrorKind.CONTEXT_OVERFLOW:
+                self.overflows += 1
+            raise
+        if response.usage is not None:
+            self.input_tokens += response.usage.input_tokens
+            self.output_tokens += response.usage.output_tokens
+        return response
+
+    def snapshot(self) -> tuple[int, int, int, int]:
+        return self.calls, self.overflows, self.input_tokens, self.output_tokens
+
+
 @dataclass(frozen=True, slots=True)
 class QualityCase:
     name: str
@@ -276,9 +311,11 @@ async def run(*, real: bool | None = None) -> dict[str, object]:
             "network_requests": 0,
         }
 
-    provider: LLMService | None = None
+    provider: UsageTrackingLLM | None = None
     if enabled:
-        provider = OpenAICompatibleLLM(OpenAICompatibleConfig.from_env())
+        provider = UsageTrackingLLM(
+            OpenAICompatibleLLM(OpenAICompatibleConfig.from_env())
+        )
 
     rows: list[dict[str, object]] = []
     for case in CASES:
@@ -289,12 +326,15 @@ async def run(*, real: bool | None = None) -> dict[str, object]:
                 else ScriptedLLM([ModelResponse(_offline_summary(case))])
             )
             started = time.perf_counter()
+            before_tracking = provider.snapshot() if provider is not None else None
             session, request, metrics = await _request_for_mode(
                 case, mode, summary_llm
             )
             estimate = ACCOUNTING.estimate_request(request)
             overflow_count = 0
             actual_input_tokens: int | None = None
+            total_actual_input_tokens: int | None = None
+            total_actual_output_tokens: int | None = None
             llm_calls = metrics["compaction_count"]
             if provider is None:
                 success = _offline_quality(request, case.expected_marker)
@@ -309,6 +349,12 @@ async def run(*, real: bool | None = None) -> dict[str, object]:
                     success = False
                     if error.kind is LLMErrorKind.CONTEXT_OVERFLOW:
                         overflow_count = 1
+                assert before_tracking is not None
+                after_tracking = provider.snapshot()
+                llm_calls = after_tracking[0] - before_tracking[0]
+                overflow_count = after_tracking[1] - before_tracking[1]
+                total_actual_input_tokens = after_tracking[2] - before_tracking[2]
+                total_actual_output_tokens = after_tracking[3] - before_tracking[3]
             rows.append(
                 {
                     "case": case.name,
@@ -316,6 +362,14 @@ async def run(*, real: bool | None = None) -> dict[str, object]:
                     **metrics,
                     "request_estimated_tokens": estimate.total_tokens,
                     "actual_input_tokens": actual_input_tokens,
+                    "total_actual_input_tokens": total_actual_input_tokens,
+                    "summary_actual_input_tokens": (
+                        total_actual_input_tokens - actual_input_tokens
+                        if total_actual_input_tokens is not None
+                        and actual_input_tokens is not None
+                        else None
+                    ),
+                    "total_actual_output_tokens": total_actual_output_tokens,
                     "llm_calls": llm_calls,
                     "overflow_count": overflow_count,
                     "overflow_recovery_count": 0,
