@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +19,7 @@ from .protocol import (
     ToolSchema,
     is_json_value,
 )
+from .tool_effects import ReconcileResult, ReconcileStatus, ToolEffectKind
 
 
 class ToolConcurrency(StrEnum):
@@ -33,11 +35,34 @@ class ToolExecutionContext:
 
     agent_id: str
     session_id: str
-    call_id: str
+    tool_call_id: str
+    operation_id: str
+    attempt: int = 1
+
+    def __post_init__(self) -> None:
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                self.agent_id,
+                self.session_id,
+                self.tool_call_id,
+                self.operation_id,
+            )
+        ):
+            raise ValueError("tool execution identities must be non-empty strings")
+        if (
+            isinstance(self.attempt, bool)
+            or not isinstance(self.attempt, int)
+            or self.attempt < 1
+        ):
+            raise ValueError("tool execution attempt must be a positive integer")
 
 
 ToolHandler: TypeAlias = Callable[
     [Mapping[str, JsonValue], ToolExecutionContext], Awaitable[JsonValue]
+]
+ReconcileHandler: TypeAlias = Callable[
+    [ToolExecutionContext], Awaitable[ReconcileResult]
 ]
 
 
@@ -50,10 +75,27 @@ class ToolDefinition:
     required_capability: str | None = None
     timeout_seconds: float | None = None
     concurrency: ToolConcurrency = ToolConcurrency.PARALLEL
+    effect_kind: ToolEffectKind = ToolEffectKind.READ_ONLY
+    reconcile_handler: ReconcileHandler | None = None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "effect_kind", ToolEffectKind(self.effect_kind))
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:
             raise ValueError("tool timeout_seconds must be positive")
+        if (
+            self.effect_kind is ToolEffectKind.RECONCILABLE_MUTATION
+            and self.reconcile_handler is None
+        ):
+            raise ValueError(
+                "RECONCILABLE_MUTATION requires a reconcile_handler"
+            )
+        if (
+            self.effect_kind is not ToolEffectKind.RECONCILABLE_MUTATION
+            and self.reconcile_handler is not None
+        ):
+            raise ValueError(
+                "reconcile_handler is only valid for RECONCILABLE_MUTATION"
+            )
 
     async def execute(
         self,
@@ -66,6 +108,22 @@ class ToolDefinition:
             return await self.handler(arguments, context)
         async with asyncio.timeout(self.timeout_seconds):
             return await self.handler(arguments, context)
+
+    async def reconcile(self, context: ToolExecutionContext) -> ReconcileResult:
+        """Query external state through a Tool-owned reconciliation contract."""
+
+        if self.reconcile_handler is None:
+            raise RuntimeError(
+                f'tool "{self.schema.name}" does not support reconciliation'
+            )
+        if self.timeout_seconds is None:
+            result = await self.reconcile_handler(context)
+        else:
+            async with asyncio.timeout(self.timeout_seconds):
+                result = await self.reconcile_handler(context)
+        if not isinstance(result, ReconcileResult):
+            raise TypeError("reconcile handler must return ReconcileResult")
+        return result
 
 
 class ToolRegistry:
@@ -91,6 +149,8 @@ class ToolRegistry:
             required_capability=definition.required_capability,
             timeout_seconds=definition.timeout_seconds,
             concurrency=definition.concurrency,
+            effect_kind=definition.effect_kind,
+            reconcile_handler=definition.reconcile_handler,
         )
 
     def model_schemas(self, agent: AgentControlBlock) -> tuple[ToolSchema, ...]:
@@ -117,6 +177,31 @@ class ToolRegistry:
     ) -> ToolResult:
         """Resolve, authorize, execute, and normalize one tool call."""
 
+        resolved = self.resolve_for_execution(call, agent)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        definition = resolved
+        if definition.effect_kind is not ToolEffectKind.READ_ONLY:
+            return ToolResult.failure(
+                call,
+                ErrorCode.EINVAL,
+                f'mutation tool "{call.name}" requires DurableToolExecutor',
+            )
+        context = ToolExecutionContext(
+            agent_id=agent.agent_id,
+            session_id=agent.session_id,
+            tool_call_id=call.call_id,
+            operation_id=f"op_{uuid.uuid4().hex}",
+        )
+        return await self.invoke(resolved, call, context)
+
+    def resolve_for_execution(
+        self,
+        call: ToolCall,
+        agent: AgentControlBlock,
+    ) -> ToolDefinition | ToolResult:
+        """Resolve and authorize before any durable intent is created."""
+
         definition = self._definitions.get(call.name)
         if definition is None:
             return ToolResult.failure(
@@ -131,11 +216,16 @@ class ToolRegistry:
                 ErrorCode.EACCES,
                 f'agent lacks required capability "{capability}"',
             )
-        context = ToolExecutionContext(
-            agent_id=agent.agent_id,
-            session_id=agent.session_id,
-            call_id=call.call_id,
-        )
+        return definition
+
+    async def invoke(
+        self,
+        definition: ToolDefinition,
+        call: ToolCall,
+        context: ToolExecutionContext,
+    ) -> ToolResult:
+        """Invoke one already-authorized Tool and normalize runtime failures."""
+
         try:
             output = await definition.execute(call.arguments, context)
             if not is_json_value(output):

@@ -8,6 +8,7 @@ from .agent import (
     CapabilityBoundError,
 )
 from .events import EventType, SessionEvent
+from .durable_tools import DurableToolExecutionError, DurableToolExecutor
 from .hooks import HookEvent, HookManager, HookPoint
 from .llm import LLMService, ScriptedLLM
 from .loop import DefaultAgentLoop, LoopBudgetExceeded
@@ -38,7 +39,14 @@ from .protocol import (
     ToolSchema,
 )
 from .session import Session
-from .recovery import RecoveryAnalysis, SessionStatus, analyze_recovery
+from .recovery import (
+    DurableOperationRecovery,
+    OperationRecoveryClassification,
+    RecoveryAnalysis,
+    SessionStatus,
+    analyze_recovery,
+)
+from .tool_effects import ReconcileResult, ReconcileStatus, ToolEffectKind
 from .tools import (
     ToolConcurrency,
     ToolDefinition,
@@ -53,6 +61,9 @@ __all__ = [
     "AgentState",
     "CapabilityBoundError",
     "DefaultAgentLoop",
+    "DurableOperationRecovery",
+    "DurableToolExecutionError",
+    "DurableToolExecutor",
     "ErrorCode",
     "EventType",
     "FinishReason",
@@ -69,8 +80,11 @@ __all__ = [
     "ModelResponse",
     "PromptAssembly",
     "PromptService",
+    "OperationRecoveryClassification",
     "PersistedSession",
     "RecoveryAnalysis",
+    "ReconcileResult",
+    "ReconcileStatus",
     "SESSION_FORMAT_VERSION",
     "ScriptedLLM",
     "Session",
@@ -87,6 +101,7 @@ __all__ = [
     "ToolDefinition",
     "ToolError",
     "ToolExecutionContext",
+    "ToolEffectKind",
     "ToolRegistry",
     "ToolResult",
     "ToolSchema",

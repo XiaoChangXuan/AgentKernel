@@ -12,13 +12,18 @@ from .protocol import JsonValue, is_json_value
 
 
 class EventType(StrEnum):
-    """Closed V0.1 event vocabulary."""
+    """Closed durable Session event vocabulary."""
 
     TURN_START = "turn/start"
     USER_MESSAGE = "user/message"
     STEP_START = "step/start"
     ASSISTANT_MESSAGE = "assistant/message"
     TOOL_CALL = "tool/call"
+    TOOL_PREPARE = "tool/prepare"
+    TOOL_DISPATCH = "tool/dispatch"
+    TOOL_COMMIT = "tool/commit"
+    TOOL_ABORT = "tool/abort"
+    TOOL_RECONCILE = "tool/reconcile"
     TOOL_RESULT = "tool/result"
     STEP_END = "step/end"
     TURN_END = "turn/end"
