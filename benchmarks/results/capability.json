@@ -1,0 +1,87 @@
+[
+  {
+    "benchmark": "capability_core",
+    "case": "basic_authorization",
+    "metrics": {
+      "action": "resource.read",
+      "actual_allowed": true,
+      "agent_id": "agent-a",
+      "expected_allowed": true,
+      "grant_count": 1,
+      "latency_ms": 0.011,
+      "matched_scope": "artifact://project-a/**",
+      "reason": "allowed",
+      "resource": "artifact://project-a/file.txt",
+      "success": true
+    },
+    "strategy": "phase_1_evaluator"
+  },
+  {
+    "benchmark": "capability_core",
+    "case": "scope_isolation",
+    "metrics": {
+      "action": "resource.read",
+      "actual_allowed": false,
+      "agent_id": "agent-a",
+      "expected_allowed": false,
+      "grant_count": 1,
+      "latency_ms": 0.006,
+      "matched_scope": null,
+      "reason": "no_matching_grant",
+      "resource": "artifact://project-b/file.txt",
+      "success": true
+    },
+    "strategy": "phase_1_evaluator"
+  },
+  {
+    "benchmark": "capability_core",
+    "case": "action_isolation",
+    "metrics": {
+      "action": "resource.write",
+      "actual_allowed": false,
+      "agent_id": "agent-a",
+      "expected_allowed": false,
+      "grant_count": 1,
+      "latency_ms": 0.002,
+      "matched_scope": null,
+      "reason": "no_matching_grant",
+      "resource": "artifact://project-a/file.txt",
+      "success": true
+    },
+    "strategy": "phase_1_evaluator"
+  },
+  {
+    "benchmark": "capability_core",
+    "case": "multiple_grant_project_a",
+    "metrics": {
+      "action": "resource.read",
+      "actual_allowed": true,
+      "agent_id": "agent-a",
+      "expected_allowed": true,
+      "grant_count": 2,
+      "latency_ms": 0.003,
+      "matched_scope": "artifact://project-a/**",
+      "reason": "allowed",
+      "resource": "artifact://project-a/file.txt",
+      "success": true
+    },
+    "strategy": "phase_1_evaluator"
+  },
+  {
+    "benchmark": "capability_core",
+    "case": "multiple_grant_project_b",
+    "metrics": {
+      "action": "resource.read",
+      "actual_allowed": true,
+      "agent_id": "agent-a",
+      "expected_allowed": true,
+      "grant_count": 2,
+      "latency_ms": 0.003,
+      "matched_scope": "artifact://project-b/**",
+      "reason": "allowed",
+      "resource": "artifact://project-b/file.txt",
+      "success": true
+    },
+    "strategy": "phase_1_evaluator"
+  }
+]
