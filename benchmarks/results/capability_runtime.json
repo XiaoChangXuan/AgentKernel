@@ -1,0 +1,80 @@
+[
+  {
+    "benchmark": "capability_runtime",
+    "case": "unauthorized_tool",
+    "metrics": {
+      "allowed": false,
+      "error_code": "EACCES",
+      "expected": "DENY",
+      "latency_ms": 2.561,
+      "model_visible": false,
+      "success": true,
+      "visible_tool_count": 0
+    },
+    "strategy": "tool_registry_capability"
+  },
+  {
+    "benchmark": "capability_runtime",
+    "case": "unauthorized_resource_read",
+    "metrics": {
+      "allowed": false,
+      "error_code": "EACCES",
+      "expected": "DENY",
+      "latency_ms": 67.704,
+      "requested_resource": "artifact://res_secret",
+      "resource_reads": 0,
+      "success": true
+    },
+    "strategy": "resource_service_capability"
+  },
+  {
+    "benchmark": "capability_runtime",
+    "case": "unauthorized_payment_dispatch",
+    "metrics": {
+      "allowed": false,
+      "authorization_denied_events": 1,
+      "dispatch_events": 0,
+      "error_code": "EACCES",
+      "expected": "DENY",
+      "external_execution_count": 0,
+      "latency_ms": 2.806,
+      "operation_classification": "completed",
+      "success": true
+    },
+    "strategy": "durable_dispatch_capability"
+  },
+  {
+    "benchmark": "capability_runtime",
+    "case": "crash_after_prepare",
+    "metrics": {
+      "authorization_metadata_present": true,
+      "event_count_before_restart": 7,
+      "expected": "Recovery without duplicate",
+      "external_execution_count": 1,
+      "final_session_status": "completed",
+      "latency_ms": 10.822,
+      "payment_count": 1,
+      "pre_recovery_classification": "safe_to_retry",
+      "retry_allowed": true,
+      "retry_ok": true,
+      "success": true
+    },
+    "strategy": "wal_recovery_capability"
+  },
+  {
+    "benchmark": "capability_runtime",
+    "case": "legacy_tool",
+    "metrics": {
+      "allowed": true,
+      "error_code": null,
+      "expected": "Backward compatible",
+      "latency_ms": 1.803,
+      "output": {
+        "value": "ok"
+      },
+      "success": true,
+      "visible_tool_count": 1
+    },
+    "strategy": "legacy_required_capability"
+  }
+]
