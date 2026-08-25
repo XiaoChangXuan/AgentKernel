@@ -94,6 +94,17 @@ from .protocol import (
     ToolSchema,
 )
 from .process import CapabilitySnapshot, ProcessControlBlock, ProcessState
+from .scheduler import (
+    CooperativeScheduler,
+    NoRunnableProcess,
+    ProcessAlreadyExists,
+    ProcessCancelled,
+    ProcessManager,
+    ProcessNotFound,
+    ProcessPaused,
+    SchedulerError,
+    SchedulerSafePoint,
+)
 from .session import Session
 from .recovery import (
     DurableOperationRecovery,
@@ -148,6 +159,7 @@ __all__ = [
     "CapabilityEvaluator",
     "CapabilityGrant",
     "CapabilitySnapshot",
+    "CooperativeScheduler",
     "ApproximateTokenEstimator",
     "ApproximateRequestTokenAccounting",
     "CompactionRange",
@@ -200,9 +212,15 @@ __all__ = [
     "ModelResponse",
     "ModelUsage",
     "ModelContextLimits",
+    "NoRunnableProcess",
     "PromptAssembly",
     "PromptService",
+    "ProcessAlreadyExists",
+    "ProcessCancelled",
     "ProcessControlBlock",
+    "ProcessManager",
+    "ProcessNotFound",
+    "ProcessPaused",
     "ProcessState",
     "OperationRecoveryClassification",
     "PersistedSession",
@@ -233,6 +251,8 @@ __all__ = [
     "ReconcileStatus",
     "SESSION_FORMAT_VERSION",
     "ScriptedLLM",
+    "SchedulerError",
+    "SchedulerSafePoint",
     "Session",
     "SessionAlreadyExistsError",
     "SessionCorruptionError",

@@ -13,7 +13,14 @@ from .events import EventType
 from .hooks import HookEvent, HookManager, HookPoint
 from .llm import LLMErrorKind, LLMService, LLMServiceError
 from .prompt import PromptService
+from .process import ProcessState
 from .protocol import ModelRequest, ModelResponse, ToolCall, ToolResult
+from .scheduler import (
+    CooperativeScheduler,
+    ProcessCancelled,
+    ProcessPaused,
+    SchedulerSafePoint,
+)
 from .token_accounting import (
     ApproximateRequestTokenAccounting,
     RequestTokenAccounting,
@@ -60,6 +67,7 @@ class DefaultAgentLoop:
         context: ContextService | None = None,
         context_budget: ContextBudget | None = None,
         token_accounting: RequestTokenAccounting | None = None,
+        scheduler: CooperativeScheduler | None = None,
     ) -> None:
         self._llm = llm
         self._tools = tools
@@ -84,13 +92,25 @@ class DefaultAgentLoop:
             or llm.token_accounting
             or ApproximateRequestTokenAccounting()
         )
+        self._scheduler = scheduler
         self.last_context_recovery: ContextRecoveryRecord | None = None
 
-    async def run(self, agent: Agent, user_input: str) -> str:
+    async def run(
+        self,
+        agent: Agent,
+        user_input: str,
+        *,
+        process_id: str | None = None,
+    ) -> str:
         """Run one user turn until a final model answer or kernel failure."""
 
         if agent.control.state is not AgentState.READY:
             raise RuntimeError(f"agent must be READY, got {agent.control.state}")
+        self._dispatch_process(process_id)
+        self._scheduler_safe_point(
+            process_id,
+            SchedulerSafePoint.BEFORE_TURN_START,
+        )
         turn = 1 + sum(
             event.type is EventType.TURN_START for event in agent.session.events
         )
@@ -108,6 +128,10 @@ class DefaultAgentLoop:
         current_step = 0
         try:
             while True:
+                self._scheduler_safe_point(
+                    process_id,
+                    SchedulerSafePoint.BEFORE_STEP_START,
+                )
                 if steps >= agent.control.budget.max_steps_per_turn:
                     turn_closed = self._close_budget_failure(
                         agent=agent,
@@ -116,6 +140,7 @@ class DefaultAgentLoop:
                         limit="max_steps_per_turn",
                         maximum=agent.control.budget.max_steps_per_turn,
                     )
+                    self._exit_process(process_id, "budget_exceeded")
                     raise LoopBudgetExceeded(
                         "max_steps_per_turn",
                         agent.control.budget.max_steps_per_turn,
@@ -147,6 +172,8 @@ class DefaultAgentLoop:
                         llm=self._llm,
                         system_prompt=assembly.system_prompt,
                     ),
+                    process_id=process_id,
+                    wait_reason="context_working_set",
                 )
                 request = ModelRequest(
                     messages=working_set.to_messages(),
@@ -159,6 +186,11 @@ class DefaultAgentLoop:
                     working_set=working_set,
                     turn=turn,
                     system_prompt=assembly.system_prompt,
+                    process_id=process_id,
+                )
+                self._scheduler_safe_point(
+                    process_id,
+                    SchedulerSafePoint.BEFORE_LLM_CALL,
                 )
                 response = await self._generate_with_overflow_recovery(
                     agent=agent,
@@ -166,6 +198,7 @@ class DefaultAgentLoop:
                     working_set=working_set,
                     turn=turn,
                     system_prompt=assembly.system_prompt,
+                    process_id=process_id,
                 )
                 agent.session.append(
                     EventType.ASSISTANT_MESSAGE,
@@ -193,6 +226,7 @@ class DefaultAgentLoop:
                     )
                     turn_closed = True
                     agent.control.transition(AgentState.READY)
+                    self._yield_process(process_id, ProcessState.READY)
                     return response.content
 
                 for call in response.tool_calls:
@@ -205,6 +239,7 @@ class DefaultAgentLoop:
                             maximum=agent.control.budget.max_tool_calls_per_turn,
                         )
                         step_open = False
+                        self._exit_process(process_id, "budget_exceeded")
                         raise LoopBudgetExceeded(
                             "max_tool_calls_per_turn",
                             agent.control.budget.max_tool_calls_per_turn,
@@ -215,6 +250,7 @@ class DefaultAgentLoop:
                         call=call,
                         turn=turn,
                         step=current_step,
+                        process_id=process_id,
                     )
 
                 agent.session.append(
@@ -226,6 +262,46 @@ class DefaultAgentLoop:
                     },
                 )
                 step_open = False
+        except ProcessPaused:
+            if step_open:
+                agent.session.append(
+                    EventType.STEP_END,
+                    {
+                        "turn": turn,
+                        "step": current_step,
+                        "outcome": "paused",
+                    },
+                )
+            if not turn_closed:
+                agent.session.append(
+                    EventType.TURN_END,
+                    {"turn": turn, "reason": "paused"},
+                )
+            if agent.control.state is AgentState.WAITING:
+                agent.control.transition(AgentState.RUNNING)
+            if agent.control.state is AgentState.RUNNING:
+                agent.control.transition(AgentState.PAUSED)
+            raise
+        except ProcessCancelled:
+            if step_open:
+                agent.session.append(
+                    EventType.STEP_END,
+                    {
+                        "turn": turn,
+                        "step": current_step,
+                        "outcome": "cancelled",
+                    },
+                )
+            if not turn_closed:
+                agent.session.append(
+                    EventType.TURN_END,
+                    {"turn": turn, "reason": "cancelled"},
+                )
+            if agent.control.state is AgentState.WAITING:
+                agent.control.transition(AgentState.RUNNING)
+            if agent.control.state is AgentState.RUNNING:
+                agent.control.transition(AgentState.EXITED)
+            raise
         except LoopBudgetExceeded:
             raise
         except BaseException as error:
@@ -252,6 +328,7 @@ class DefaultAgentLoop:
                 agent.control.transition(AgentState.RUNNING)
             if agent.control.state is AgentState.RUNNING:
                 agent.control.transition(AgentState.FAILED)
+            self._exit_process(process_id, f"failed:{type(error).__name__}")
             raise
 
     async def _preflight_request(
@@ -262,6 +339,7 @@ class DefaultAgentLoop:
         working_set: ContextWorkingSet,
         turn: int,
         system_prompt: str | None,
+        process_id: str | None = None,
     ) -> tuple[ModelRequest, ContextWorkingSet]:
         """Use complete-request accounting before the provider sees the request."""
 
@@ -276,6 +354,7 @@ class DefaultAgentLoop:
             system_prompt=system_prompt,
             before=estimate,
             reason="local request accounting exceeded the input budget",
+            process_id=process_id,
         )
 
     async def _generate_with_overflow_recovery(
@@ -286,11 +365,17 @@ class DefaultAgentLoop:
         working_set: ContextWorkingSet,
         turn: int,
         system_prompt: str | None,
+        process_id: str | None = None,
     ) -> ModelResponse:
         """Retry exactly once, and only after a normalized provider overflow."""
 
         try:
-            return await self._while_waiting(agent, self._llm.generate(request))
+            return await self._while_waiting(
+                agent,
+                self._llm.generate(request),
+                process_id=process_id,
+                wait_reason="llm",
+            )
         except LLMServiceError as first_error:
             if first_error.kind is not LLMErrorKind.CONTEXT_OVERFLOW:
                 raise
@@ -303,6 +388,7 @@ class DefaultAgentLoop:
                 system_prompt=system_prompt,
                 before=before,
                 reason="provider reported context overflow",
+                process_id=process_id,
             )
             after = self._token_accounting.estimate_request(recovered_request)
             self.last_context_recovery = ContextRecoveryRecord(
@@ -314,6 +400,8 @@ class DefaultAgentLoop:
                 return await self._while_waiting(
                     agent,
                     self._llm.generate(recovered_request),
+                    process_id=process_id,
+                    wait_reason="llm",
                 )
             except LLMServiceError as second_error:
                 if second_error.kind is LLMErrorKind.CONTEXT_OVERFLOW:
@@ -332,6 +420,7 @@ class DefaultAgentLoop:
         system_prompt: str | None,
         before: RequestTokenEstimate,
         reason: str,
+        process_id: str | None = None,
     ) -> tuple[ModelRequest, ContextWorkingSet]:
         from .context import ContextBudgetExceeded
         try:
@@ -345,6 +434,8 @@ class DefaultAgentLoop:
                     previous=working_set,
                     system_prompt=system_prompt,
                 ),
+                process_id=process_id,
+                wait_reason="context_reclaim",
             )
         except ContextBudgetExceeded as error:
             raise ContextOverflowRecoveryError(
@@ -370,7 +461,12 @@ class DefaultAgentLoop:
         call: ToolCall,
         turn: int,
         step: int,
+        process_id: str | None = None,
     ) -> ToolResult:
+        self._scheduler_safe_point(
+            process_id,
+            SchedulerSafePoint.BEFORE_TOOL_CALL,
+        )
         agent.session.append(
             EventType.TOOL_CALL,
             {"turn": turn, "step": step, **call.as_dict()},
@@ -384,6 +480,10 @@ class DefaultAgentLoop:
                 tool_call=call,
             )
         )
+        self._scheduler_safe_point(
+            process_id,
+            SchedulerSafePoint.BEFORE_DURABLE_DISPATCH,
+        )
         result = await self._while_waiting(
             agent,
             self._tool_executor.execute(
@@ -393,6 +493,12 @@ class DefaultAgentLoop:
                 turn=turn,
                 step=step,
             ),
+            process_id=process_id,
+            wait_reason="tool",
+        )
+        self._scheduler_safe_point(
+            process_id,
+            SchedulerSafePoint.AFTER_DURABLE_DISPATCH,
         )
         agent.session.append(
             EventType.TOOL_RESULT,
@@ -410,13 +516,71 @@ class DefaultAgentLoop:
         )
         return result
 
-    async def _while_waiting(self, agent: Agent, operation: Awaitable[T]) -> T:
+    async def _while_waiting(
+        self,
+        agent: Agent,
+        operation: Awaitable[T],
+        *,
+        process_id: str | None = None,
+        wait_reason: str = "operation",
+    ) -> T:
         agent.control.transition(AgentState.WAITING)
+        process_waiting = False
+        if self._scheduler is not None and process_id is not None:
+            process = self._scheduler.manager.get(process_id)
+            if process.state is ProcessState.RUNNING:
+                self._scheduler.yield_process(
+                    process_id,
+                    ProcessState.WAITING,
+                    reason=wait_reason,
+                )
+                process_waiting = True
         try:
             return await operation
         finally:
             if agent.control.state is AgentState.WAITING:
                 agent.control.transition(AgentState.RUNNING)
+            if self._scheduler is not None and process_id is not None and process_waiting:
+                process = self._scheduler.manager.get(process_id)
+                if process.state is ProcessState.WAITING:
+                    self._scheduler.wake(process_id)
+                    self._scheduler.dispatch(process_id)
+
+    def _dispatch_process(self, process_id: str | None) -> None:
+        if self._scheduler is None or process_id is None:
+            return
+        process = self._scheduler.manager.get(process_id)
+        if process.state is ProcessState.CREATED:
+            self._scheduler.admit(process_id)
+            process = self._scheduler.manager.get(process_id)
+        if process.state is ProcessState.READY:
+            self._scheduler.dispatch(process_id)
+            return
+        if process.state is not ProcessState.RUNNING:
+            raise RuntimeError(f"process must be READY or RUNNING, got {process.state}")
+
+    def _scheduler_safe_point(
+        self,
+        process_id: str | None,
+        point: SchedulerSafePoint,
+    ) -> None:
+        if self._scheduler is None or process_id is None:
+            return
+        self._scheduler.safe_point(process_id, point)
+
+    def _yield_process(self, process_id: str | None, target: ProcessState) -> None:
+        if self._scheduler is None or process_id is None:
+            return
+        process = self._scheduler.manager.get(process_id)
+        if process.state is ProcessState.RUNNING:
+            self._scheduler.yield_process(process_id, target)
+
+    def _exit_process(self, process_id: str | None, exit_status: str) -> None:
+        if self._scheduler is None or process_id is None:
+            return
+        process = self._scheduler.manager.get(process_id)
+        if process.state is not ProcessState.EXITED:
+            self._scheduler.exit_process(process_id, exit_status=exit_status)
 
     @staticmethod
     def _close_budget_failure(
