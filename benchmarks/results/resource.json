@@ -1,0 +1,131 @@
+[
+  {
+    "benchmark": "resource_handle",
+    "case": "10MB_tool_result",
+    "metrics": {
+      "context_bytes": 10485868,
+      "estimated_tokens": 2621467,
+      "read_latency_ms": 0.0,
+      "resource_bytes": 0,
+      "restart_recovery": false,
+      "success": true
+    },
+    "strategy": "full_tool_result"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "10MB_tool_result",
+    "metrics": {
+      "context_bytes": 12430,
+      "estimated_tokens": 3108,
+      "required_offsets": 3,
+      "resource_bytes": 0,
+      "retained_information_correct": false,
+      "retained_required_offsets": 2,
+      "success": false
+    },
+    "strategy": "v0_4_pruning"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "10MB_tool_result",
+    "metrics": {
+      "context_bytes": 12806,
+      "estimated_tokens": 3202,
+      "read_latency_ms": 8.807,
+      "resource_bytes": 10485760,
+      "resource_bytes_read": 129,
+      "resource_reads": 3,
+      "restart_recovery": true,
+      "store_bytes": 10486294,
+      "success": true
+    },
+    "strategy": "artifact_handle"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "100MB_tool_result",
+    "metrics": {
+      "context_bytes": 104857708,
+      "estimated_tokens": 26214427,
+      "read_latency_ms": 0.0,
+      "resource_bytes": 0,
+      "restart_recovery": false,
+      "success": true
+    },
+    "strategy": "full_tool_result"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "100MB_tool_result",
+    "metrics": {
+      "context_bytes": 12431,
+      "estimated_tokens": 3108,
+      "required_offsets": 3,
+      "resource_bytes": 0,
+      "retained_information_correct": false,
+      "retained_required_offsets": 2,
+      "success": false
+    },
+    "strategy": "v0_4_pruning"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "100MB_tool_result",
+    "metrics": {
+      "context_bytes": 12809,
+      "estimated_tokens": 3203,
+      "read_latency_ms": 16.369,
+      "resource_bytes": 104857600,
+      "resource_bytes_read": 129,
+      "resource_reads": 3,
+      "restart_recovery": true,
+      "store_bytes": 104858134,
+      "success": true
+    },
+    "strategy": "artifact_handle"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "500MB_tool_result",
+    "metrics": {
+      "context_bytes": 524288108,
+      "estimated_tokens": 131072027,
+      "read_latency_ms": 0.0,
+      "resource_bytes": 0,
+      "restart_recovery": false,
+      "success": true
+    },
+    "strategy": "full_tool_result"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "500MB_tool_result",
+    "metrics": {
+      "context_bytes": 12431,
+      "estimated_tokens": 3108,
+      "required_offsets": 3,
+      "resource_bytes": 0,
+      "retained_information_correct": false,
+      "retained_required_offsets": 2,
+      "success": false
+    },
+    "strategy": "v0_4_pruning"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "500MB_tool_result",
+    "metrics": {
+      "context_bytes": 12809,
+      "estimated_tokens": 3203,
+      "read_latency_ms": 14.612,
+      "resource_bytes": 524288000,
+      "resource_bytes_read": 129,
+      "resource_reads": 3,
+      "restart_recovery": true,
+      "store_bytes": 524288535,
+      "success": true
+    },
+    "strategy": "artifact_handle"
+  }
+]
