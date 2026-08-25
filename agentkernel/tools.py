@@ -11,6 +11,10 @@ from enum import StrEnum
 from typing import Mapping, Protocol, TypeAlias
 
 from .agent import AgentControlBlock
+from .capabilities import (
+    CapabilityEvaluator,
+    legacy_tool_request,
+)
 from .protocol import (
     ErrorCode,
     JsonValue,
@@ -174,9 +178,18 @@ class ToolRegistry:
         """Project only model-facing fields for tools the agent may execute."""
 
         schemas: list[ToolSchema] = []
+        evaluator = CapabilityEvaluator.from_legacy_capabilities(
+            agent_id=agent.agent_id,
+            capabilities=agent.capabilities,
+        )
         for definition in self._definitions.values():
             capability = definition.required_capability
-            if capability is not None and not agent.has_capability(capability):
+            if capability is not None and not evaluator.authorize(
+                legacy_tool_request(
+                    agent_id=agent.agent_id,
+                    required_capability=capability,
+                )
+            ).allowed:
                 continue
             schemas.append(
                 ToolSchema(
@@ -227,12 +240,23 @@ class ToolRegistry:
                 f'tool "{call.name}" is not registered',
             )
         capability = definition.required_capability
-        if capability is not None and not agent.has_capability(capability):
-            return ToolResult.failure(
-                call,
-                ErrorCode.EACCES,
-                f'agent lacks required capability "{capability}"',
+        if capability is not None:
+            evaluator = CapabilityEvaluator.from_legacy_capabilities(
+                agent_id=agent.agent_id,
+                capabilities=agent.capabilities,
             )
+            decision = evaluator.authorize(
+                legacy_tool_request(
+                    agent_id=agent.agent_id,
+                    required_capability=capability,
+                )
+            )
+            if not decision.allowed:
+                return ToolResult.failure(
+                    call,
+                    ErrorCode.EACCES,
+                    f'agent lacks required capability "{capability}"',
+                )
         return definition
 
     async def invoke(

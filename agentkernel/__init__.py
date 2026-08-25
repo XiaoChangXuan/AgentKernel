@@ -7,6 +7,12 @@ from .agent import (
     AgentState,
     CapabilityBoundError,
 )
+from .capabilities import (
+    AuthorizationDecision,
+    AuthorizationRequest,
+    CapabilityEvaluator,
+    CapabilityGrant,
+)
 from .context import (
     ApproximateTokenEstimator,
     ApproximateRequestTokenAccounting,
@@ -130,7 +136,11 @@ __all__ = [
     "AgentBudget",
     "AgentControlBlock",
     "AgentState",
+    "AuthorizationDecision",
+    "AuthorizationRequest",
     "CapabilityBoundError",
+    "CapabilityEvaluator",
+    "CapabilityGrant",
     "ApproximateTokenEstimator",
     "ApproximateRequestTokenAccounting",
     "CompactionRange",
