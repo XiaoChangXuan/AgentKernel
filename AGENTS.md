@@ -1,6 +1,6 @@
-# AgentKernel V0.1 agent guide
+# AgentKernel V0.2 agent guide
 
-Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes the implemented V0.1 behavior; code and tests are the final authority when prose drifts.
+Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.2 behavior; code and tests are the final authority when prose drifts.
 
 ## Goal
 
@@ -10,6 +10,8 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 
 - `agentkernel/protocol.py`: provider-neutral messages, model requests/responses, tool schemas/calls/results, error codes.
 - `agentkernel/events.py` and `agentkernel/session.py`: append-only event vocabulary and model-history projection.
+- `agentkernel/persistence.py`: Session header, storage seam, InMemory and single-writer JSONL drivers.
+- `agentkernel/recovery.py`: pure replay validation and recovery analysis; never recovery policy.
 - `agentkernel/agent.py`: Agent, AgentControlBlock, state transitions, capabilities, bounding set, budgets.
 - `agentkernel/tools.py`: runtime tool definitions, model schema projection, capability enforcement, execution.
 - `agentkernel/prompt.py`, `agentkernel/llm.py`, `agentkernel/hooks.py`: replaceable seams used by the loop.
@@ -32,6 +34,7 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 
 ```bash
 python examples/basic_agent.py
+python examples/persistent_session.py
 python examples/real_llm_agent.py  # requires explicit AGENTKERNEL_LLM_* environment
 python -m pytest
 python -m compileall -q agentkernel examples tests
@@ -39,14 +42,24 @@ python -m compileall -q agentkernel examples tests
 
 Run focused tests after changing a module, then the full suite before handoff.
 
-## Prohibited in V0.1
+## Prohibited in V0.2 first phase
 
 - Provider wire or SDK types outside `agentkernel/providers/`.
 - Direct business actions in `loop.py`.
 - A second mutable chat-history store beside Session events.
 - Capability mutation by model or tool code.
-- Persistence, SQLite, WAL, Context VM, VFS, scheduler, multi-agent, subagent, IPC, complex plugin runtime, UI, Gateway, MCP, RAG, or vector storage.
+- SQLite, Tool WAL, operation ids, side-effect reconciliation, Context VM, VFS, scheduler, multi-agent, subagent, IPC, complex plugin runtime, UI, Gateway, MCP, RAG, or vector storage.
 - Large copied sections from reference repositories.
+
+## Persistence and recovery constraints
+
+- Historical Session events are immutable; continuing a restored Session only appends.
+- Session owns semantics and must not know JSONL paths or file operations.
+- Loading and analysis never repair, close, truncate, or synthesize historical events.
+- A truncated final JSONL record is reported and the original artifact remains unchanged.
+- Never auto-retry a pending Tool Call during recovery; its external side effect is ambiguous.
+- Do not claim external side-effect recovery before the V0.3 WAL/reconciliation stage.
+- JSONL is single-writer only. Do not imply multi-process safety or a lease protocol.
 
 ## References
 
@@ -57,4 +70,4 @@ Run focused tests after changing a module, then the full suite before handoff.
 
 ## Stage
 
-Current: V0.1 Agent Spine plus an optional non-streaming OpenAI-compatible Provider boundary, still in-memory and single-agent. Next: V0.2 Persistence + Recovery. Do not start V0.2 behavior in a V0.1 change unless the user explicitly expands scope.
+Current: V0.2 Persistence + Recovery first phase: InMemory and JSONL storage, strict replay validation, and read-only recovery analysis. SQLite and V0.3 Tool WAL/reconciliation remain explicit future decisions.
