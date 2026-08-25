@@ -1,0 +1,95 @@
+[
+  {
+    "benchmark": "v0.7_runtime",
+    "case": "scheduler_lifecycle",
+    "metrics": {
+      "blocked_reason_cleared": true,
+      "exit_status": "completed",
+      "expected_states": "CREATED>READY>RUNNING>WAITING>BLOCKED>EXITED",
+      "final_state": "EXITED",
+      "observed_states": "CREATED>READY>RUNNING>WAITING>BLOCKED>EXITED",
+      "success": true,
+      "wait_reason_cleared": true
+    },
+    "strategy": "process_control_block_state_machine"
+  },
+  {
+    "benchmark": "v0.7_runtime",
+    "case": "waiting_blocked_ready_transition",
+    "metrics": {
+      "blocked_reason": "budget_review",
+      "blocked_registry_size": 0,
+      "final_state": "READY",
+      "ready_after_wake": true,
+      "ready_queue_size": 1,
+      "success": true,
+      "waiting_reason": "tool_result",
+      "waiting_registry_size": 0
+    },
+    "strategy": "cooperative_scheduler_registries"
+  },
+  {
+    "benchmark": "v0.7_runtime",
+    "case": "budget_blocking",
+    "metrics": {
+      "blocked": true,
+      "blocked_reason": "budget_exceeded:max_token_usage",
+      "blocked_registry_size": 1,
+      "budget_limit": "max_token_usage",
+      "budget_maximum": 10,
+      "exceeded_limit": "max_token_usage",
+      "observed_usage": 11,
+      "process_state": "BLOCKED",
+      "success": true
+    },
+    "strategy": "usage_collector_scheduler_safe_point"
+  },
+  {
+    "benchmark": "v0.7_runtime",
+    "case": "usage_accounting",
+    "metrics": {
+      "model_cost": 0.42,
+      "process_id": "process-usage",
+      "resource_bytes": 5120,
+      "resource_reads": 2,
+      "success": true,
+      "token_usage": 28,
+      "tool_calls": 2,
+      "wall_time": 3.25
+    },
+    "strategy": "process_usage_snapshot"
+  },
+  {
+    "benchmark": "v0.7_runtime",
+    "case": "process_crash_recovery",
+    "metrics": {
+      "blocked_reason": "durable_operation_recovery",
+      "durable_operation_classification": "reconcile_required",
+      "no_runnable_before_unblock": true,
+      "recovered_state": "BLOCKED",
+      "session_status": "interrupted",
+      "session_truth_preserved": true,
+      "state_after_unblock_dispatch": "RUNNING",
+      "success": true
+    },
+    "strategy": "session_replay_to_process_state"
+  },
+  {
+    "benchmark": "v0.7_runtime",
+    "case": "agent_process_session_boundary_isolation",
+    "metrics": {
+      "agent_id": "agent-boundary",
+      "capability_subject": "agent-boundary",
+      "capability_subject_is_agent": true,
+      "capability_subject_is_process": false,
+      "process_agent_id": "agent-boundary",
+      "process_id": "process-boundary",
+      "process_session_id": "session-boundary",
+      "process_state_after_session_append": "READY",
+      "session_event_count": 1,
+      "session_id": "session-boundary",
+      "success": true
+    },
+    "strategy": "identity_and_durability_separation"
+  }
+]
