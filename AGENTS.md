@@ -1,6 +1,6 @@
-# AgentKernel V0.4 phase 2 agent guide
+# AgentKernel V0.4 phase 3 agent guide
 
-Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.4 phase 2 behavior; code and tests are the final authority when prose drifts.
+Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.4 phase 3 behavior; code and tests are the final authority when prose drifts.
 
 ## Goal
 
@@ -12,7 +12,8 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 - `agentkernel/events.py` and `agentkernel/session.py`: append-only event vocabulary and model-history projection.
 - `agentkernel/persistence.py`: Session header, storage seam, InMemory and single-writer JSONL drivers.
 - `agentkernel/recovery.py`: pure replay validation and recovery analysis; never recovery policy.
-- `agentkernel/context/`: Context Pages, projection, token estimation, policy, pressure, pruning, durable compaction, working-set selection, and protocol validation.
+- `agentkernel/token_accounting.py`: complete-request accounting, deterministic fallback, and lightweight model limits.
+- `agentkernel/context/`: Context Pages, projection, policy, pressure, pruning, durable compaction, forced reclaim, working-set selection, and protocol validation.
 - `agentkernel/tool_effects.py`: host-only Tool effect and reconciliation values.
 - `agentkernel/durable_tools.py`: mutation authorization, operation identity, WAL boundaries, dispatch, retry, and reconciliation mechanisms.
 - `agentkernel/agent.py`: Agent, AgentControlBlock, state transitions, capabilities, bounding set, budgets.
@@ -52,7 +53,13 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 - Only a fully completed durable Summary may shadow source Pages in the model-visible projection.
 - Context Page IDs include Session identity; pin and page-in state must not alias across Sessions.
 - Do not persist ordinary Context working sets or reconstructable metrics. Summary lifecycle records are durable because model generation is expensive and non-deterministic.
-- Do not introduce RAG, Memory, or VFS in V0.4 phase 2.
+- Do not introduce RAG, Memory, or VFS in V0.4 phase 3.
+- Never retry Provider context overflow indefinitely; automatic recovery may retry the model call at most once.
+- Provider-specific error strings must not leak into `ContextManager` or reclaim policy.
+- Context accounting must include system prompt, message/tool payloads, Tool Schemas, and protocol overhead—not only `message.content`.
+- Exact Provider counting is optional; a deterministic offline fallback is required.
+- Overflow recovery must never evict mandatory pinned Pages or rerun durable Tool side effects.
+- Real API benchmarks must never run in default pytest, commit credentials, or print API keys.
 
 ## Durable Tool rules
 
@@ -72,6 +79,8 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 python examples/basic_agent.py
 python examples/persistent_session.py
 python -m examples.context_reclamation_benchmark
+python -m benchmarks.context_real_provider_benchmark
+python -m benchmarks.coding_fixture_runner
 python examples/real_llm_agent.py  # requires explicit AGENTKERNEL_LLM_* environment
 python -m pytest
 python -m compileall -q agentkernel examples tests
@@ -79,7 +88,7 @@ python -m compileall -q agentkernel examples tests
 
 Run focused tests after changing a module, then the full suite before handoff.
 
-## Prohibited in V0.4 phase 2
+## Prohibited in V0.4 phase 3
 
 - Provider wire or SDK types outside `agentkernel/providers/`.
 - Direct business actions in `loop.py`.
@@ -106,4 +115,4 @@ Run focused tests after changing a module, then the full suite before handoff.
 
 ## Stage
 
-Current: V0.4 Context VM phase 2 on top of the phase 1 working set and V0.3 Durable Tool Execution releases. Implemented mechanisms include explicit pressure, deterministic pruning, durable provenance-carrying Summary Pages, retained-tail/atomic-safe compaction, shadow replay, rolling checkpoints, crash analysis, and reclamation metrics. Provider overflow retry, exact tokenizers, VFS, long-term memory, RAG, and SQLite remain future decisions.
+Current: V0.4 Context VM phase 3 on top of phase 2 reclamation, the phase 1 working set, and V0.3 Durable Tool Execution. Implemented mechanisms include complete-request fallback accounting, adapter-supplied accounting/limits, normalized Provider failures, forced reclaim to a policy-owned safety target, and exactly one overflow retry. Exact Provider tokenizers remain optional. VFS, long-term memory, RAG, and SQLite remain future decisions.

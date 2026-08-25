@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
+from dataclasses import dataclass
 from typing import TypeVar
 
 from .agent import Agent, AgentState
-from .context import ContextBudget, ContextManager, ContextService
+from .context import ContextBudget, ContextManager, ContextService, ContextWorkingSet
 from .durable_tools import DurableToolExecutor
 from .events import EventType
 from .hooks import HookEvent, HookManager, HookPoint
-from .llm import LLMService
+from .llm import LLMErrorKind, LLMService, LLMServiceError
 from .prompt import PromptService
-from .protocol import ModelRequest, ToolCall, ToolResult
+from .protocol import ModelRequest, ModelResponse, ToolCall, ToolResult
+from .token_accounting import (
+    ApproximateRequestTokenAccounting,
+    RequestTokenAccounting,
+    RequestTokenEstimate,
+)
 from .tools import ToolRegistry
 
 T = TypeVar("T")
@@ -25,6 +31,19 @@ class LoopBudgetExceeded(RuntimeError):
         self.limit = limit
         self.maximum = maximum
         super().__init__(f"{limit} budget exhausted at {maximum}")
+
+
+class ContextOverflowRecoveryError(RuntimeError):
+    """Provider overflow could not be safely recovered within one retry."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContextRecoveryRecord:
+    """Diagnostics for the latest provider-triggered reclaim in this loop."""
+
+    before_tokens: int
+    after_tokens: int
+    provider_attempts: int
 
 
 class DefaultAgentLoop:
@@ -40,6 +59,7 @@ class DefaultAgentLoop:
         tool_executor: DurableToolExecutor | None = None,
         context: ContextService | None = None,
         context_budget: ContextBudget | None = None,
+        token_accounting: RequestTokenAccounting | None = None,
     ) -> None:
         self._llm = llm
         self._tools = tools
@@ -47,10 +67,24 @@ class DefaultAgentLoop:
         self._hooks = hooks or HookManager()
         self._tool_executor = tool_executor or DurableToolExecutor(tools)
         self._context = context or ContextManager()
-        self._context_budget = context_budget or ContextBudget(
-            max_tokens=128_000,
-            reserved_output_tokens=16_000,
+        limits = llm.context_limits
+        self._context_budget = context_budget or (
+            ContextBudget(
+                max_tokens=limits.context_window_tokens,
+                reserved_output_tokens=limits.output_reserve_tokens,
+            )
+            if limits is not None
+            else ContextBudget(
+                max_tokens=128_000,
+                reserved_output_tokens=16_000,
+            )
         )
+        self._token_accounting = (
+            token_accounting
+            or llm.token_accounting
+            or ApproximateRequestTokenAccounting()
+        )
+        self.last_context_recovery: ContextRecoveryRecord | None = None
 
     async def run(self, agent: Agent, user_input: str) -> str:
         """Run one user turn until a final model answer or kernel failure."""
@@ -119,9 +153,19 @@ class DefaultAgentLoop:
                     tools=assembly.tools,
                     system_prompt=working_set.system_prompt,
                 )
-                response = await self._while_waiting(
-                    agent,
-                    self._llm.generate(request),
+                request, working_set = await self._preflight_request(
+                    agent=agent,
+                    request=request,
+                    working_set=working_set,
+                    turn=turn,
+                    system_prompt=assembly.system_prompt,
+                )
+                response = await self._generate_with_overflow_recovery(
+                    agent=agent,
+                    request=request,
+                    working_set=working_set,
+                    turn=turn,
+                    system_prompt=assembly.system_prompt,
                 )
                 agent.session.append(
                     EventType.ASSISTANT_MESSAGE,
@@ -209,6 +253,115 @@ class DefaultAgentLoop:
             if agent.control.state is AgentState.RUNNING:
                 agent.control.transition(AgentState.FAILED)
             raise
+
+    async def _preflight_request(
+        self,
+        *,
+        agent: Agent,
+        request: ModelRequest,
+        working_set: ContextWorkingSet,
+        turn: int,
+        system_prompt: str | None,
+    ) -> tuple[ModelRequest, ContextWorkingSet]:
+        """Use complete-request accounting before the provider sees the request."""
+
+        estimate = self._token_accounting.estimate_request(request)
+        if estimate.total_tokens <= self._context_budget.available_input_tokens:
+            return request, working_set
+        return await self._reclaim_request(
+            agent=agent,
+            request=request,
+            working_set=working_set,
+            turn=turn,
+            system_prompt=system_prompt,
+            before=estimate,
+            reason="local request accounting exceeded the input budget",
+        )
+
+    async def _generate_with_overflow_recovery(
+        self,
+        *,
+        agent: Agent,
+        request: ModelRequest,
+        working_set: ContextWorkingSet,
+        turn: int,
+        system_prompt: str | None,
+    ) -> ModelResponse:
+        """Retry exactly once, and only after a normalized provider overflow."""
+
+        try:
+            return await self._while_waiting(agent, self._llm.generate(request))
+        except LLMServiceError as first_error:
+            if first_error.kind is not LLMErrorKind.CONTEXT_OVERFLOW:
+                raise
+            before = self._token_accounting.estimate_request(request)
+            recovered_request, _ = await self._reclaim_request(
+                agent=agent,
+                request=request,
+                working_set=working_set,
+                turn=turn,
+                system_prompt=system_prompt,
+                before=before,
+                reason="provider reported context overflow",
+            )
+            after = self._token_accounting.estimate_request(recovered_request)
+            self.last_context_recovery = ContextRecoveryRecord(
+                before_tokens=before.total_tokens,
+                after_tokens=after.total_tokens,
+                provider_attempts=2,
+            )
+            try:
+                return await self._while_waiting(
+                    agent,
+                    self._llm.generate(recovered_request),
+                )
+            except LLMServiceError as second_error:
+                if second_error.kind is LLMErrorKind.CONTEXT_OVERFLOW:
+                    raise ContextOverflowRecoveryError(
+                        "provider context overflow persisted after one reclaimed retry"
+                    ) from second_error
+                raise
+
+    async def _reclaim_request(
+        self,
+        *,
+        agent: Agent,
+        request: ModelRequest,
+        working_set: ContextWorkingSet,
+        turn: int,
+        system_prompt: str | None,
+        before: RequestTokenEstimate,
+        reason: str,
+    ) -> tuple[ModelRequest, ContextWorkingSet]:
+        from .context import ContextBudgetExceeded
+        try:
+            reclaimed = await self._while_waiting(
+                agent,
+                self._context.force_reclaim(
+                    agent.session,
+                    current_turn=turn,
+                    budget=self._context_budget,
+                    llm=self._llm,
+                    previous=working_set,
+                    system_prompt=system_prompt,
+                ),
+            )
+        except ContextBudgetExceeded as error:
+            raise ContextOverflowRecoveryError(
+                f"{reason}; mandatory pages prevent forced reclaim: {error}"
+            ) from error
+        reclaimed_request = ModelRequest(
+            messages=reclaimed.to_messages(),
+            tools=request.tools,
+            system_prompt=reclaimed.system_prompt,
+        )
+        after = self._token_accounting.estimate_request(reclaimed_request)
+        if after.total_tokens >= before.total_tokens:
+            raise ContextOverflowRecoveryError(
+                f"{reason}; forced reclaim made no measurable progress "
+                f"({before.total_tokens} -> {after.total_tokens} tokens)"
+            )
+        return reclaimed_request, reclaimed
 
     async def _execute_tool(
         self,

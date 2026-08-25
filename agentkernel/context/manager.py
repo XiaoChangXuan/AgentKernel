@@ -60,6 +60,17 @@ class ContextService(Protocol):
         system_prompt: str | None = None,
     ) -> ContextWorkingSet: ...
 
+    async def force_reclaim(
+        self,
+        session: Session,
+        *,
+        current_turn: int,
+        budget: ContextBudget,
+        llm: LLMService,
+        previous: ContextWorkingSet,
+        system_prompt: str | None = None,
+    ) -> ContextWorkingSet: ...
+
 
 class ContextManager:
     """Project, classify, select, page in, and order Context Pages."""
@@ -161,6 +172,72 @@ class ContextManager:
         self._requested.clear()
         return working_set
 
+    async def force_reclaim(
+        self,
+        session: Session,
+        *,
+        current_turn: int,
+        budget: ContextBudget,
+        llm: LLMService,
+        previous: ContextWorkingSet,
+        system_prompt: str | None = None,
+    ) -> ContextWorkingSet:
+        """Build a strictly smaller physical set after provider overflow.
+
+        The first pass uses only deterministic eviction/pruning at the configured
+        safety target. If that cannot make progress, one normal durable compaction
+        attempt is allowed before the caller decides whether a retry is safe.
+        """
+
+        target_input = int(
+            budget.available_input_tokens * self.pressure_config.target_ratio
+        )
+        forced_max = budget.reserved_output_tokens + target_input
+        if forced_max < 1:
+            forced_max = 1
+        forced_budget = ContextBudget(
+            max_tokens=forced_max,
+            reserved_output_tokens=min(budget.reserved_output_tokens, forced_max),
+        )
+        try:
+            working_set, _, pages = self._build_components(
+                session,
+                current_turn=current_turn,
+                budget=forced_budget,
+                system_prompt=system_prompt,
+                force_overflow=True,
+            )
+            if working_set.metrics.selected_tokens < previous.metrics.selected_tokens:
+                return working_set
+
+            def visible_pages() -> tuple[ContextPage, ...]:
+                _, _, current = self._build_components(
+                    session,
+                    current_turn=current_turn,
+                    budget=budget,
+                    system_prompt=system_prompt,
+                )
+                return tuple(current)
+
+            result = await self.compactor.compact(
+                session,
+                tuple(pages),
+                llm,
+                visible_pages=visible_pages,
+                system_prompt=system_prompt,
+            )
+            if result is not None:
+                working_set, _, _ = self._build_components(
+                    session,
+                    current_turn=current_turn,
+                    budget=forced_budget,
+                    system_prompt=system_prompt,
+                    force_overflow=True,
+                )
+            return working_set
+        finally:
+            self._requested.clear()
+
     def pressure(
         self,
         session: Session,
@@ -186,6 +263,7 @@ class ContextManager:
         current_turn: int,
         budget: ContextBudget,
         system_prompt: str | None,
+        force_overflow: bool = False,
     ) -> tuple[ContextWorkingSet, ContextPressure, list[ContextPage]]:
         projected = self.projector.project(session, system_prompt=system_prompt)
         classified = self.policy.apply(projected, current_turn=current_turn)
@@ -214,6 +292,7 @@ class ContextManager:
             working_set_tokens=sum(page.token_cost for page in raw_selected),
             budget=budget,
             config=self.pressure_config,
+            force_overflow=force_overflow,
         )
         actions = self.reclaim_policy.actions(initial_pressure)
         if ContextReclaimAction.PRUNE_TOOL_RESULTS in actions:
@@ -232,6 +311,7 @@ class ContextManager:
             working_set_tokens=selected_cost,
             budget=budget,
             config=self.pressure_config,
+            force_overflow=force_overflow,
         )
         pruned = [page.pruning for page in pages if page.pruning is not None]
         summaries = [page.summary for page in pages if page.summary is not None]

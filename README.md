@@ -35,8 +35,10 @@ DefaultAgentLoop
   │     ├── ContextPressure + ReclaimPolicy
   │     ├── deterministic ToolResultPruner
   │     ├── durable ContextCompactor
-  │     └── budgeted Working Set ──> ModelRequest
+  │     ├── budgeted Working Set ──> ModelRequest
+  │     └── provider-aware request token accounting
   ├── LLMService / ScriptedLLM
+  │     └── normalized context overflow ──> forced reclaim ──> retry once
   └── ToolRegistry
         ├── model schema projection
         ├── capability check
@@ -188,13 +190,36 @@ Pruning changes only the model-visible Tool Result Page and retains its source P
 
 The summary lifecycle (`requested → started → summary created → completed`) is append-only and replay-validated. Only a completed summary becomes visible after restart. Rolling compaction can replace a prior checkpoint plus newer old history with one successor checkpoint.
 
-This is bounded, lossy context reclamation—not infinite context, lossless summarization, perfect memory, RAG, or long-term memory. Token estimates also exclude Provider envelope and Tool Schema overhead, which callers must reserve.
+This is bounded, lossy context reclamation—not infinite context, lossless summarization, perfect memory, RAG, or long-term memory.
 
 Run the offline 200-turn comparison:
 
 ```bash
 python -m examples.context_reclamation_benchmark
 ```
+
+### V0.4 phase 3: provider-aware accounting and overflow recovery
+
+`RequestTokenAccounting` estimates the complete `ModelRequest`, not only Page text. The deterministic fallback reports separate costs for system prompt, messages (including Tool Calls and Tool Results), Tool Schemas, and provider envelope. `ModelContextLimits` carries a lightweight provider/model context window, maximum output, and recommended output reserve without creating a model registry. Provider adapters may replace the fallback with an exact tokenizer; Context VM never imports a Provider SDK.
+
+No estimator is guaranteed to equal every Provider's final billing or hidden envelope. A normalized Provider context overflow is therefore the final safety boundary:
+
+```text
+ModelRequest → Provider CONTEXT_OVERFLOW
+             → ContextService.force_reclaim()
+             → rebuild a measurably smaller request
+             → retry exactly once
+```
+
+The adapter classifies overflow separately from rate limit, timeout, authentication, unavailable service, and ordinary invalid requests. Provider-specific strings stay at that boundary. The loop owns only the one-retry guard; eviction, pruning, compaction, safety target, and pinned-Page enforcement remain Context VM policy. Reclaim failure, no measurable reduction, or a second overflow raises `ContextOverflowRecoveryError` without a third call. Because retry completes before an Assistant event or Tool Call is appended, it cannot replay a durable Tool side effect.
+
+Run the default network-free Phase 3 resource/quality benchmark:
+
+```bash
+python -m benchmarks.context_real_provider_benchmark
+```
+
+It compares Full History, Phase 1 eviction, and Phase 2/3 reclamation across early-constraint, middle-decision, and large-Tool-tail cases. Real API execution is never part of pytest and requires all three `AGENTKERNEL_LLM_*` variables plus `AGENTKERNEL_RUN_REAL_BENCHMARK=1`. API keys are neither committed nor printed. A small isolated coding fixture and runner seam are available through `python -m benchmarks.coding_fixture_runner`; full Shell Agent orchestration remains out of scope.
 
 ## Run against an OpenAI-compatible API
 
@@ -229,10 +254,10 @@ python -m pytest
 
 ## Current stage
 
-V0.4 phase 2 adds explicit pressure measurement, replaceable reclaim policy, deterministic Tool Result pruning, durable provenance-carrying summaries, retained-tail compaction, model-visible shadow/replacement semantics, rolling checkpoints, crash-safe replay, and reclamation metrics. Phase 1 working-set selection and V0.3 Durable Tool Execution remain intact underneath it. All tests and the benchmark are offline by default.
+V0.4 phase 3 adds complete-request token accounting, optional model limits, Provider-boundary failure normalization, and one-shot overflow recovery on top of phase 2's pruning and durable compaction. Phase 1 working-set selection and V0.3 Durable Tool Execution remain intact underneath it. All tests and benchmarks are offline by default.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior, [`docs/CONTEXT_PROVIDER_RECOVERY_RESEARCH.md`](docs/CONTEXT_PROVIDER_RECOVERY_RESEARCH.md) for the phase 3 source study, and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
 ## Next stage
 
-The next V0.4 decision is Provider-overflow retry and more accurate Provider-aware token accounting. V0.5 virtual resources/artifact handles, RAG, long-term memory, SQLite, and multi-agent execution remain out of scope.
+The next decision is review and, if accepted, merge/tag V0.4. V0.5 virtual resources/artifact handles and a later SQLite persistence driver remain separate choices; RAG, long-term memory, and multi-agent execution are not part of this phase.

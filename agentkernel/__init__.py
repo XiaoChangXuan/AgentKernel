@@ -9,6 +9,7 @@ from .agent import (
 )
 from .context import (
     ApproximateTokenEstimator,
+    ApproximateRequestTokenAccounting,
     CompactionRange,
     ContextBudget,
     ContextBudgetExceeded,
@@ -35,6 +36,9 @@ from .context import (
     ContextWorkingSet,
     DefaultContextPolicy,
     DefaultContextReclaimPolicy,
+    ModelContextLimits,
+    RequestTokenAccounting,
+    RequestTokenEstimate,
     SummaryProvenance,
     TokenEstimator,
     ToolResultPruner,
@@ -45,8 +49,13 @@ from .context import (
 from .events import EventType, SessionEvent
 from .durable_tools import DurableToolExecutionError, DurableToolExecutor
 from .hooks import HookEvent, HookManager, HookPoint
-from .llm import LLMService, ScriptedLLM
-from .loop import DefaultAgentLoop, LoopBudgetExceeded
+from .llm import LLMErrorKind, LLMService, LLMServiceError, ScriptedLLM
+from .loop import (
+    ContextOverflowRecoveryError,
+    ContextRecoveryRecord,
+    DefaultAgentLoop,
+    LoopBudgetExceeded,
+)
 from .prompt import PromptAssembly, PromptService
 from .persistence import (
     SESSION_FORMAT_VERSION,
@@ -68,6 +77,7 @@ from .protocol import (
     MessageRole,
     ModelRequest,
     ModelResponse,
+    ModelUsage,
     ToolCall,
     ToolError,
     ToolResult,
@@ -96,6 +106,7 @@ __all__ = [
     "AgentState",
     "CapabilityBoundError",
     "ApproximateTokenEstimator",
+    "ApproximateRequestTokenAccounting",
     "CompactionRange",
     "ContextBudget",
     "ContextBudgetExceeded",
@@ -120,6 +131,8 @@ __all__ = [
     "ContextTemperature",
     "ContextTrustLabel",
     "ContextWorkingSet",
+    "ContextOverflowRecoveryError",
+    "ContextRecoveryRecord",
     "DefaultAgentLoop",
     "DefaultContextPolicy",
     "DefaultContextReclaimPolicy",
@@ -135,16 +148,22 @@ __all__ = [
     "InMemorySessionPersistence",
     "JsonlSessionPersistence",
     "LLMService",
+    "LLMErrorKind",
+    "LLMServiceError",
     "LoopBudgetExceeded",
     "Message",
     "MessageRole",
     "ModelRequest",
     "ModelResponse",
+    "ModelUsage",
+    "ModelContextLimits",
     "PromptAssembly",
     "PromptService",
     "OperationRecoveryClassification",
     "PersistedSession",
     "RecoveryAnalysis",
+    "RequestTokenAccounting",
+    "RequestTokenEstimate",
     "ReconcileResult",
     "ReconcileStatus",
     "SESSION_FORMAT_VERSION",

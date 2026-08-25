@@ -217,7 +217,47 @@ A completed Summary shadows exactly its contiguous source Pages in the model-vis
 
 ### Metrics and overflow boundary
 
-Working-set metrics add pressure state, pruned Page count/savings, compacted Page/source costs, Summary cost, total reclaim savings, and completed compaction count. These use the configured estimator, not exact Provider wire tokens. Provider-specific overflow classification and one-shot forced reclaim/retry remain a future seam; phase 2 does not guess from arbitrary Provider errors.
+Working-set metrics add pressure state, pruned Page count/savings, compacted Page/source costs, Summary cost, total reclaim savings, and completed compaction count. Page costs still use the configured estimator. Phase 3 separately accounts for the complete Provider request.
+
+### Provider-aware request accounting
+
+```text
+Context Pages + Tool Schemas + system prompt
+                    ↓
+             RequestTokenAccounting
+                    ↓
+       RequestTokenEstimate breakdown
+                    ↓
+              ModelRequest budget
+```
+
+`RequestTokenAccounting` is a provider-neutral adapter seam. Its deterministic fallback counts system prompt, role/content and per-message overhead, Tool Call IDs/names/JSON arguments, Tool Result messages, Tool Schema name/description/JSON parameters, and request envelope. `ModelContextLimits` carries provider, model, context window, maximum output, and output reserve. When limits are present on `LLMService`, the default loop derives `ContextBudget` from them; an explicit caller budget still wins.
+
+The fallback is stable and network-free, not exact. A Provider adapter can expose a model-specific tokenizer through the same interface without importing that SDK into Context VM. Successful `ModelResponse.usage` records Provider-reported input/output/total tokens when the wire response supplies them; semantic Session history does not persist billing telemetry.
+
+### Provider overflow recovery
+
+```text
+Session Event Log
+      ↓
+Context Projection → Working Set → request accounting → ModelRequest
+                                                       ↓
+                                                   Provider
+                                                       ↓
+                                             normalized overflow?
+                                                       ↓ yes
+                                      ContextService.force_reclaim()
+                                                       ↓
+                                      measurably smaller ModelRequest
+                                                       ↓
+                                                retry once only
+```
+
+Provider-specific status/code/message recognition belongs exclusively to the Provider adapter. Core sees `LLMErrorKind.CONTEXT_OVERFLOW`, distinct from rate limit, timeout, service unavailable, authentication, invalid request, protocol, and unknown failures.
+
+`force_reclaim()` raises pressure to `OVERFLOW` and selects against the Context policy's `target_ratio`; the loop contains no eviction/pruning/compaction thresholds. Deterministic eviction and pruning run first. If they make no progress, Context VM may attempt one ordinary durable compaction. The rebuilt request must have a strictly smaller complete-request estimate or the Kernel fails fast. A second Provider overflow becomes `ContextOverflowRecoveryError`; there is no third model call.
+
+The retry surrounds only `LLMService.generate()`. No Assistant event, Tool Call, Tool WAL record, or external handler execution occurs until a response succeeds, so overflow recovery cannot duplicate a Tool side effect. Pinned/mandatory closure remains enforced by `ContextBudgetExceeded` and is never silently discarded.
 
 ## Tool boundary
 
@@ -293,9 +333,9 @@ Outbound conversion supports:
 - function Tool Schemas containing only name, description, and parameters;
 - `tool_choice=auto` when tools are present.
 
-Inbound conversion requires a non-streaming Chat Completions response. Function arguments must be a JSON string that decodes to an object. Missing identities, invalid arguments, unsupported message content, and inconsistent finish reasons raise `OpenAICompatibleProtocolError` before the response reaches the loop. HTTP, transport, configuration, and protocol failures remain distinct, and HTTP diagnostics redact the configured API key.
+Inbound conversion requires a non-streaming Chat Completions response. Function arguments must be a JSON string that decodes to an object. Missing identities, invalid arguments, unsupported message content, and inconsistent finish reasons raise `OpenAICompatibleProtocolError` before the response reaches the loop. HTTP errors are normalized at this boundary into context overflow, rate limit, timeout, authentication, unavailable, invalid request, or unknown. HTTP diagnostics redact the configured API key.
 
-The current AgentKernel Protocol already preserves the semantic information required for basic Tool Calling: assistant Tool Calls carry stable call IDs, and each Tool Result becomes a tool message carrying the same ID. Successful Provider diagnostics such as request ID, model echo, and token usage are deliberately not added to the semantic protocol yet because V0.1 does not consume them.
+The AgentKernel Protocol preserves the semantic information required for basic Tool Calling: assistant Tool Calls carry stable call IDs, and each Tool Result becomes a tool message carrying the same ID. Phase 3 adds optional provider-neutral token usage to `ModelResponse` for benchmark/accounting diagnostics; request IDs and model echoes remain outside semantic Session history.
 
 ## Durable Session
 
@@ -368,4 +408,4 @@ These are reconstructed mechanism facts, not policy choices. `DurableToolExecuto
 
 ## Deliberately deferred
 
-V0.4 phase 2 has no semantic retrieval, RAG, embeddings, long-term memory, full DeepSeek-style Surface subsystem, VFS/artifact handles, infinite context, SQLite, multi-process writer/lease, repair API, snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, prompt-injection classifier, exact Provider tokenizer, or Provider-specific overflow retry layer.
+V0.4 phase 3 has no semantic retrieval, RAG, embeddings, long-term memory, full DeepSeek-style Surface subsystem, VFS/artifact handles, infinite context, SQLite, multi-process writer/lease, repair API, snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, prompt-injection classifier, complex model registry, multi-Provider fallback, or bundled exact Provider tokenizer.

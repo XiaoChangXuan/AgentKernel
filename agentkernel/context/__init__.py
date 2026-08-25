@@ -33,10 +33,18 @@ from .pressure import (
     assess_context_pressure,
 )
 from .pruning import ToolResultPruner, ToolResultPrunerConfig
-from .tokens import ApproximateTokenEstimator, TokenEstimator
+from .tokens import (
+    ApproximateRequestTokenAccounting,
+    ApproximateTokenEstimator,
+    ModelContextLimits,
+    RequestTokenAccounting,
+    RequestTokenEstimate,
+    TokenEstimator,
+)
 
 __all__ = [
     "ApproximateTokenEstimator",
+    "ApproximateRequestTokenAccounting",
     "ContextBudget",
     "ContextBudgetExceeded",
     "CompactionRange",
@@ -63,6 +71,9 @@ __all__ = [
     "ContextWorkingSet",
     "DefaultContextPolicy",
     "DefaultContextReclaimPolicy",
+    "ModelContextLimits",
+    "RequestTokenAccounting",
+    "RequestTokenEstimate",
     "SummaryProvenance",
     "TokenEstimator",
     "ToolResultPruner",
