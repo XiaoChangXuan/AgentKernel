@@ -6,6 +6,7 @@ from collections.abc import Awaitable
 from typing import TypeVar
 
 from .agent import Agent, AgentState
+from .durable_tools import DurableToolExecutor
 from .events import EventType
 from .hooks import HookEvent, HookManager, HookPoint
 from .llm import LLMService
@@ -35,11 +36,13 @@ class DefaultAgentLoop:
         tools: ToolRegistry,
         prompt: PromptService,
         hooks: HookManager | None = None,
+        tool_executor: DurableToolExecutor | None = None,
     ) -> None:
         self._llm = llm
         self._tools = tools
         self._prompt = prompt
         self._hooks = hooks or HookManager()
+        self._tool_executor = tool_executor or DurableToolExecutor(tools)
 
     async def run(self, agent: Agent, user_input: str) -> str:
         """Run one user turn until a final model answer or kernel failure."""
@@ -164,7 +167,8 @@ class DefaultAgentLoop:
         except LoopBudgetExceeded:
             raise
         except BaseException as error:
-            if step_open:
+            pending_tool_calls = agent.session.recovery_analysis.pending_tool_calls
+            if step_open and not pending_tool_calls:
                 agent.session.append(
                     EventType.STEP_END,
                     {
@@ -173,7 +177,7 @@ class DefaultAgentLoop:
                         "outcome": "error",
                     },
                 )
-            if not turn_closed:
+            if not turn_closed and not pending_tool_calls:
                 agent.session.append(
                     EventType.TURN_END,
                     {
@@ -211,7 +215,13 @@ class DefaultAgentLoop:
         )
         result = await self._while_waiting(
             agent,
-            self._tools.execute(call, agent.control),
+            self._tool_executor.execute(
+                call,
+                agent.control,
+                agent.session,
+                turn=turn,
+                step=step,
+            ),
         )
         agent.session.append(
             EventType.TOOL_RESULT,

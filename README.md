@@ -33,8 +33,11 @@ DefaultAgentLoop
   └── ToolRegistry
         ├── model schema projection
         ├── capability check
-        ├── host execution
-        └── structured ToolResult
+        └── DurableToolExecutor
+              ├── operation identity + mutation WAL
+              ├── host execution
+              ├── idempotent retry / reconciliation
+              └── structured ToolResult
 
 Session
   ├── append-only semantic Event Log
@@ -88,7 +91,7 @@ Recovery results are:
 - `INTERRUPTED`: the prefix is valid but has an open Turn/Step, a pending Tool Call, or a reported truncated tail.
 - `CORRUPTED`: bytes or semantic relationships are invalid; loading raises `SessionCorruptionError` carrying a corrupted analysis when replay reached the semantic validator.
 
-A final incomplete JSONL record is ignored only for analysis, with `tail_truncated` and a warning. The file is not modified and the loaded Session cannot append until an explicit future repair operation exists. A pending Tool Call is always ambiguous: V0.2 cannot know whether an external side effect occurred and never retries it automatically.
+A final incomplete JSONL record is ignored only for analysis, with `tail_truncated` and a warning. The file is not modified and the loaded Session cannot append until an explicit future repair operation exists. V0.3 additionally reconstructs each prepared mutation as `SAFE_TO_RETRY`, `IDEMPOTENT_RETRY_ALLOWED`, `RECONCILE_REQUIRED`, `COMPLETED`, or `MANUAL_REQUIRED`; analysis reports the mechanism fact and does not silently select deployment policy.
 
 Run the offline persistence/restart example:
 
@@ -96,7 +99,38 @@ Run the offline persistence/restart example:
 python examples/persistent_session.py
 ```
 
-The JSONL driver is single-writer only. SQLite, multi-process leases, checkpoints, automatic repair, and external side-effect reconciliation are not implemented.
+The JSONL driver is single-writer only. SQLite, multi-process leases, checkpoints, and automatic repair are not implemented.
+
+## Durable Tool execution
+
+Host code classifies each Tool without exposing the classification to the model:
+
+```python
+from agentkernel import ToolDefinition, ToolEffectKind
+
+definition = ToolDefinition(
+    schema=tool_schema,
+    handler=create_order,
+    required_capability="orders.create",
+    effect_kind=ToolEffectKind.IDEMPOTENT_MUTATION,
+)
+```
+
+`READ_ONLY` is the compatibility default and runs without mutation WAL. Every mutation follows this path:
+
+```text
+Model ToolCall
+    → capability check
+    → tool/prepare + flush
+    → tool/dispatch + flush
+    → external handler(operation_id)
+    → tool/commit or tool/abort + flush
+    → ToolResult
+```
+
+The Kernel generates `operation_id` separately from the model's `tool_call_id` and passes it only through `ToolExecutionContext`. An idempotent external API can use it as its idempotency key. A reconcilable Tool can map it to `SUCCEEDED`, `FAILED`, `NOT_FOUND`, `IN_PROGRESS`, or `UNKNOWN`. An ambiguous opaque mutation becomes `MANUAL_REQUIRED` and the executor refuses an automatic retry.
+
+This is durable, recoverable side-effect execution—not a universal exactly-once guarantee. Effectively-once behavior is possible only when the external system honors stable idempotency or provides reliable reconciliation.
 
 ## Run against an OpenAI-compatible API
 
@@ -131,10 +165,10 @@ python -m pytest
 
 ## Current stage
 
-V0.2 first phase adds versioned InMemory/JSONL persistence, deterministic replay, strict consistency checking, crash-position analysis, and explicit durability boundaries to the V0.1 Agent Spine. The optional standard-library OpenAI-compatible adapter remains independent of persistence and adds no mandatory network dependency.
+V0.3 adds Kernel-owned operation identity, effect classification, mutation WAL records, pre-dispatch durability boundaries, explicit idempotent retry, Tool-owned reconciliation, and operation-level recovery classifications on top of V0.2 persistence. Offline fake-service crash tests verify no duplicate side effect on supported paths. The optional standard-library OpenAI-compatible adapter remains independent of these mechanisms and adds no mandatory network dependency.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
 ## Next stage
 
-After the JSONL semantics are accepted, the next decision is either a V0.2 SQLite driver implementing the same seam or V0.3 Tool WAL/idempotency/reconciliation. Neither is part of this phase.
+The next decision is either V0.4 Context VM or a SQLite persistence driver implementing the existing storage seam. Neither is part of V0.3.
