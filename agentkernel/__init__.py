@@ -93,6 +93,7 @@ from .protocol import (
     ToolResult,
     ToolSchema,
 )
+from .process import CapabilitySnapshot, ProcessControlBlock, ProcessState
 from .session import Session
 from .recovery import (
     DurableOperationRecovery,
@@ -146,6 +147,7 @@ __all__ = [
     "CapabilityBoundError",
     "CapabilityEvaluator",
     "CapabilityGrant",
+    "CapabilitySnapshot",
     "ApproximateTokenEstimator",
     "ApproximateRequestTokenAccounting",
     "CompactionRange",
@@ -200,6 +202,8 @@ __all__ = [
     "ModelContextLimits",
     "PromptAssembly",
     "PromptService",
+    "ProcessControlBlock",
+    "ProcessState",
     "OperationRecoveryClassification",
     "PersistedSession",
     "RecoveryAnalysis",
