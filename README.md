@@ -28,7 +28,11 @@ Agent + AgentControlBlock
   ↓
 DefaultAgentLoop
   ├── PromptService
-  ├── Session ──> append-only Event Log ──> derive_messages()
+  ├── Session ──> append-only Event Log
+  ├── ContextManager
+  │     ├── ContextProjector ──> Context Pages
+  │     ├── ContextPolicy
+  │     └── budgeted Working Set ──> ModelRequest
   ├── LLMService / ScriptedLLM
   └── ToolRegistry
         ├── model schema projection
@@ -41,7 +45,7 @@ DefaultAgentLoop
 
 Session
   ├── append-only semantic Event Log
-  ├── derive_messages()
+  ├── derive_messages() full-history compatibility projection
   └── SessionPersistence
         ├── InMemorySessionPersistence
         └── JsonlSessionPersistence
@@ -132,6 +136,42 @@ The Kernel generates `operation_id` separately from the model's `tool_call_id` a
 
 This is durable, recoverable side-effect execution—not a universal exactly-once guarantee. Effectively-once behavior is possible only when the external system honors stable idempotency or provides reliable reconciliation.
 
+## Context VM phase 1
+
+V0.4 introduces deterministic working-set based context selection. The durable Session still answers “what happened”; Context VM answers “what should this model Step see now?”
+
+```text
+Session Event Log
+    → ContextProjector
+    → Context Pages
+    → ContextPolicy
+    → budgeted Working Set
+    → ModelRequest
+```
+
+`Session.derive_messages()` remains the complete history projection. `ContextManager.build_working_set()` creates a separate, replaceable physical-context projection with an explicit input budget:
+
+```python
+from agentkernel import ContextBudget, ContextManager
+
+context = ContextManager()
+working_set = context.build_working_set(
+    session,
+    current_turn=3,
+    budget=ContextBudget(
+        max_tokens=128_000,
+        reserved_output_tokens=16_000,
+    ),
+    system_prompt="Use tools carefully.",
+)
+```
+
+The default policy pins the system prompt and current user input, favors current/recent Turns, cools older history, and makes old or oversized Tool groups first-class eviction candidates. Tool-call assistant messages and their Tool Results form an atomic group, so budget pressure cannot create an orphan OpenAI-compatible tool message. Selection happens by pin/temperature/priority/recency; output messages return to causal Session order.
+
+Eviction is not deletion. Original events and full Tool Results remain in Session. `request_page(page_id)` performs an explicit one-working-set page-in, while `pin()` and `unpin()` provide mechanism-level residency controls. If mandatory Pages and their dependencies exceed the input budget, selection raises `ContextBudgetExceeded` instead of silently dropping them.
+
+Phase 1 performs no summarization, pruning, semantic retrieval, RAG, or long-term memory. It does not provide infinite context.
+
 ## Run against an OpenAI-compatible API
 
 The optional `OpenAICompatibleLLM` adapter uses the Python standard library and the non-streaming Chat Completions endpoint. It has no default public service and does not read unrelated OpenAI credentials.
@@ -165,10 +205,10 @@ python -m pytest
 
 ## Current stage
 
-V0.3 adds Kernel-owned operation identity, effect classification, mutation WAL records, pre-dispatch durability boundaries, explicit idempotent retry, Tool-owned reconciliation, and operation-level recovery classifications on top of V0.2 persistence. Offline fake-service crash tests verify no duplicate side effect on supported paths. The optional standard-library OpenAI-compatible adapter remains independent of these mechanisms and adds no mandatory network dependency.
+V0.4 phase 1 adds deterministic Context Page projection, configurable token estimation, reserved-output-aware input budgets, replaceable policy, working-set selection, pin/evict/page-in, Tool protocol atomicity, causal ordering, structured metrics, and JSONL restart consistency. V0.3 Durable Tool Execution remains unchanged underneath it. All tests and examples are offline by default; the optional OpenAI-compatible adapter remains independent and adds no mandatory network dependency.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for implemented behavior and [`docs/IMPLEMENTATION_BLUEPRINT.md`](docs/IMPLEMENTATION_BLUEPRINT.md) for the longer roadmap.
 
 ## Next stage
 
-The next decision is either V0.4 Context VM or a SQLite persistence driver implementing the existing storage seam. Neither is part of V0.3.
+The next decision is among V0.4 phase 2 compaction/summary/tool-result pruning, V0.5 virtual resources and artifact handles, or a SQLite persistence driver. None is part of phase 1.

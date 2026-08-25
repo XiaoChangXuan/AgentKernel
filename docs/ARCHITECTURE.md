@@ -1,10 +1,10 @@
-# AgentKernel V0.3 architecture
+# AgentKernel V0.4 phase 1 architecture
 
 This document describes implemented behavior. The roadmap and long-term design constraints live in [`IMPLEMENTATION_BLUEPRINT.md`](IMPLEMENTATION_BLUEPRINT.md).
 
 ## Boundary
 
-AgentKernel V0.3 is a single-process, single-agent mechanism layer with an optionally durable Session log and a durable protocol for one Tool side-effect operation. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, and Tool implementations are replaceable callers of those mechanisms; they do not own Kernel state.
+AgentKernel V0.4 phase 1 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, and deterministic management of each model request's physical Context working set. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection boundaries, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, Tool, token-estimation, and Context-policy implementations remain replaceable seams; they do not own Kernel truth.
 
 ## Modules
 
@@ -15,6 +15,7 @@ AgentKernel V0.3 is a single-process, single-agent mechanism layer with an optio
 | `session.py` | Append-only semantic log, persistence coordination, load, and `derive_messages()` projection. |
 | `persistence.py` | Versioned header/record codec, storage errors, `SessionPersistence`, InMemory, and JSONL. |
 | `recovery.py` | Pure sequence/lifecycle/WAL validation and operation-level `RecoveryAnalysis`. |
+| `context/` | Context Page model, projection, token estimation, budget, default policy, working-set selection, pin/evict/page-in, Tool atomicity, and metrics. |
 | `llm.py` | Abstract `LLMService.generate()` and deterministic `ScriptedLLM`. |
 | `tool_effects.py` | Host-only effect classifications and reconciliation values. |
 | `tools.py` | Runtime definitions, schema projection, capability enforcement, timeout, handler invocation, and failure normalization. |
@@ -35,7 +36,11 @@ repeat:
   append step/start
   notify before_step
   PromptService.assemble()
-  Session.derive_messages()
+  ContextManager.build_working_set()
+    Session events → Context Pages
+    ContextPolicy → temperature / priority / pin
+    budget + dependencies → Working Set
+    causal projection → messages
   LLMService.generate(ModelRequest)
   append assistant/message
 
@@ -59,7 +64,107 @@ repeat:
   return final text
 ```
 
-`DefaultAgentLoop` never keeps a message list. Each model request receives a new tuple projected from Session events. Boundary events and `tool/call` are log-only; `user/message`, `assistant/message`, and `tool/result` produce model history.
+`DefaultAgentLoop` never keeps a message list and contains no token threshold or eviction policy. Each model request receives a fresh `ContextWorkingSet` through the replaceable `ContextService` seam. `Session.derive_messages()` remains the complete V0.1–V0.3 compatibility projection; the Loop now uses the budgeted projection. Boundary, WAL, and `tool/call` events are log-only; `user/message`, `assistant/message`, and `tool/result` produce Context Pages.
+
+## Context VM
+
+```text
+Session Event Log + current host system prompt
+                  ↓
+          ContextProjector
+                  ↓
+            Context Pages
+                  ↓
+          ContextPolicy
+                  ↓
+       ContextManager selection
+                  ↓
+       ContextWorkingSet + metrics
+                  ↓
+             ModelRequest
+```
+
+The key responsibility split is:
+
+- **Session:** what actually happened? It remains the durable, append-only source of truth.
+- **Context VM:** what should the current model Step see? It derives a disposable working set without editing history.
+
+Context VM is not long-term memory. Long-term memory would extract and recall facts across Sessions. It is not RAG; a future retriever may become one page-in source. It is not compaction; future compaction is one pressure-reclaim strategy that may create a durable, provenance-carrying summary projection. Phase 1 only evicts and pages existing information back in.
+
+### Context Page model
+
+Each immutable `ContextPage` carries:
+
+- a Session-qualified `page_id`;
+- `kind`: `SYSTEM`, `USER_MESSAGE`, `ASSISTANT_MESSAGE`, `TOOL_RESULT`, or the reserved-but-not-produced `SUMMARY`;
+- exact model-facing `content` and optional provider-neutral `Message`;
+- estimated `token_cost`;
+- policy fields `priority`, `temperature`, and `pinned`;
+- origin metadata `created_seq` and `turn`;
+- `trust_label`: `KERNEL`, `USER`, `TOOL`, or `EXTERNAL`;
+- `dependencies` and an optional `atomic_group`.
+
+There is no persisted `last_access`, VFS `source_uri`, `summary_of`, artifact handle, embedding, or mutable Page store in phase 1. Those fields would either create unused OS-shaped metadata or imply later subsystems that do not exist. Session-event sequence plus Session-qualified identity provides the implemented provenance.
+
+Projection and policy are separate. `ContextProjector` deterministically maps current Session events to neutral Pages and never projects Turn/Step boundaries, Tool Calls, or `tool/prepare`, `tool/dispatch`, `tool/commit`, `tool/abort`, and `tool/reconcile`. `ContextPolicy` may change only priority, temperature, and pin status; the manager rejects a policy that changes content, identity, cost, trust, dependency, or origin.
+
+### Budget and estimation
+
+`ContextBudget` defines:
+
+```text
+available_input_tokens = max_tokens - reserved_output_tokens
+```
+
+The explicit output reservation prevents input selection from consuming the entire advertised model window. `TokenEstimator` is a provider-neutral protocol. The built-in `ApproximateTokenEstimator` uses deterministic Unicode-code-point length divided by a configurable characters-per-token ratio, with no `tiktoken` or Provider import. Its count is an estimate, not exact model billing; deployments can inject a Provider-specific estimator later.
+
+Phase 1 prices system and message Pages. Tool schemas and Provider envelope overhead are not Pages yet, so deployments requiring a hard wire-level cap must reserve that overhead in the supplied budget.
+
+### Default policy
+
+`DefaultContextPolicy` is deterministic and configurable through `ContextPolicyConfig`:
+
+- system prompt: `PINNED`;
+- current user message: `PINNED` by default;
+- other current-Turn Pages: `HOT`;
+- Pages within `recent_turns`: `HOT`;
+- ordinary older Pages: `WARM`;
+- Tool groups whose result exceeds `large_tool_result_threshold_tokens`, or ages beyond `tool_result_cold_after_turns`: `COLD`.
+
+Pin choice is policy; pin enforcement is mechanism. Manual `pin()` can add residency, `unpin()` removes only that manual pin, and policy-owned pins remain authoritative.
+
+### Working-set selection
+
+Selection proceeds as follows:
+
+1. Reproject all available Pages from current truth.
+2. Apply and validate policy-only selection metadata.
+3. Apply manual pins and one-shot page-in requests.
+4. Expand mandatory Pages through atomic groups and dependencies.
+5. Fail with `ContextBudgetExceeded` if mandatory closure exceeds input budget.
+6. If the complete projection fits, select everything without arbitrary eviction.
+7. Otherwise consider remaining atomic units by temperature, priority, recency, and stable identity, admitting only units whose dependency closure fits.
+8. Restore selected Pages to `created_seq` causal order and validate Tool protocol before building messages.
+
+Evicted Pages remain in the returned metrics and Page projection and, more importantly, their source events remain untouched in Session. A later larger budget may select them naturally. `request_page(page_id)` makes an available Page plus its dependency/atomic closure mandatory for the next successful working set, then clears the request.
+
+### Tool protocol atomicity
+
+An assistant message containing Tool Calls and all corresponding Tool Results share one atomic group and mutual dependency closure. Selection includes or excludes that group as one unit. `ContextWorkingSet.to_messages()` independently validates that each selected Tool Result follows a selected assistant Tool Call and that no selected Tool Call is left without its Result. Final Session order is retained, so the OpenAI-compatible adapter never receives a priority-sorted or orphaned tool transcript.
+
+### Metrics and durable-event decision
+
+Every working set reports:
+
+```text
+projected_pages / projected_tokens
+selected_pages / selected_tokens
+evicted_pages / evicted_tokens
+pinned_pages
+budget_tokens
+```
+
+Phase 1 does not append `context/working-set` to Session. Selection and these metrics are deterministic projections of current events, system prompt, estimator, policy, page-in state, and budget; they are not irreducible facts about what happened. Persisting every step's Page IDs would grow the log and create a second lifecycle without improving recovery. A future reproducibility requirement may revisit this decision with an explicit request-envelope event.
 
 ## Tool boundary
 
@@ -162,7 +267,7 @@ event replay / consistency checking
 Session reconstruction + RecoveryAnalysis
 ```
 
-`Session` depends only on the `SessionPersistence` protocol. It does not know paths, JSONL records, file handles, or fsync. The persistence implementation owns those details. `Session` retains a replayed in-process projection for normal loop access, but the durable Event Log remains the only stored source of truth; messages and recovery facts are derived.
+`Session` depends only on the `SessionPersistence` protocol. It does not know paths, JSONL records, file handles, fsync, token budgets, or Page residency. The persistence implementation owns storage details and Context VM owns model visibility. `Session` retains a replayed in-process projection for normal access, but the durable Event Log remains the only stored conversation source of truth; full messages, Context Pages, working sets, metrics, and recovery facts are derived.
 
 The on-disk format version is `1`. A JSONL artifact starts with an explicit header record:
 
@@ -210,4 +315,4 @@ These are reconstructed mechanism facts, not policy choices. `DurableToolExecuto
 
 ## Deliberately deferred
 
-V0.3 has no SQLite, multi-process writer/lease, repair API, checkpoint/snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, Context VM or compaction, VFS, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, memory store, RAG, or Provider-specific retry layer.
+V0.4 phase 1 has no Summary generation, semantic retrieval, RAG, embeddings, long-term memory, DeepSeek-style surface replacement, Tool Result pruning, VFS/artifact handles, infinite context, SQLite, multi-process writer/lease, repair API, checkpoint/snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, prompt-injection classifier, or Provider-specific retry layer.
