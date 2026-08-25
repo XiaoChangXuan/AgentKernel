@@ -19,6 +19,7 @@ AgentKernel V0.1 is a single-process, single-agent, in-memory mechanism layer. T
 | `agent.py` | AgentControlBlock identities, states, immutable capability sets, bounding invariant, and budgets. |
 | `hooks.py` | Ordered notification seam for `before_step`, `before_tool`, and `after_tool`. |
 | `loop.py` | Turn and Step orchestration only. |
+| `providers/openai_compatible.py` | Non-streaming OpenAI-compatible Chat Completions wire translation and HTTP transport. |
 
 ## Turn data flow
 
@@ -77,7 +78,22 @@ Both `capabilities` and `capability_bounding_set` are immutable. Construction re
 
 Unexpected LLM, hook, or Kernel failures close open Step and Turn brackets, transition the Agent to `FAILED`, and propagate the exception. Tool handler failures are normal Tool results and remain visible to the next model Step.
 
+## OpenAI-compatible Provider boundary
+
+`OpenAICompatibleLLM` implements the existing `LLMService.generate()` interface without changing Kernel modules. It uses only `AGENTKERNEL_LLM_BASE_URL`, `AGENTKERNEL_LLM_MODEL`, and the optional `AGENTKERNEL_LLM_API_KEY`; there is no default endpoint or credential discovery.
+
+Outbound conversion supports:
+
+- system and user messages;
+- assistant content and one or more function Tool Calls;
+- tool messages with their required `tool_call_id`;
+- function Tool Schemas containing only name, description, and parameters;
+- `tool_choice=auto` when tools are present.
+
+Inbound conversion requires a non-streaming Chat Completions response. Function arguments must be a JSON string that decodes to an object. Missing identities, invalid arguments, unsupported message content, and inconsistent finish reasons raise `OpenAICompatibleProtocolError` before the response reaches the loop. HTTP, transport, configuration, and protocol failures remain distinct, and HTTP diagnostics redact the configured API key.
+
+The current AgentKernel Protocol already preserves the semantic information required for basic Tool Calling: assistant Tool Calls carry stable call IDs, and each Tool Result becomes a tool message carrying the same ID. Successful Provider diagnostics such as request ID, model echo, and token usage are deliberately not added to the semantic protocol yet because V0.1 does not consume them.
+
 ## Deliberately deferred
 
-V0.1 has no persistence, replay after process restart, operation id, side-effect reconciliation, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, context compaction, VFS, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, memory store, RAG, or model Provider adapter.
-
+V0.1 has no persistence, replay after process restart, operation id, side-effect reconciliation, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, context compaction, VFS, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, memory store, RAG, or Provider-specific retry layer.

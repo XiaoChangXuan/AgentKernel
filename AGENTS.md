@@ -13,6 +13,7 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 - `agentkernel/agent.py`: Agent, AgentControlBlock, state transitions, capabilities, bounding set, budgets.
 - `agentkernel/tools.py`: runtime tool definitions, model schema projection, capability enforcement, execution.
 - `agentkernel/prompt.py`, `agentkernel/llm.py`, `agentkernel/hooks.py`: replaceable seams used by the loop.
+- `agentkernel/providers/`: wire-protocol adapters; Provider concerns must stay in this boundary.
 - `agentkernel/loop.py`: thin default Turn/Step/LLM/Tool driver.
 - `examples/`: deterministic runnable compositions.
 - `tests/`: executable V0.1 contracts.
@@ -31,6 +32,7 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 
 ```bash
 python examples/basic_agent.py
+python examples/real_llm_agent.py  # requires explicit AGENTKERNEL_LLM_* environment
 python -m pytest
 python -m compileall -q agentkernel examples tests
 ```
@@ -39,7 +41,7 @@ Run focused tests after changing a module, then the full suite before handoff.
 
 ## Prohibited in V0.1
 
-- Provider SDK types in `agentkernel/`.
+- Provider wire or SDK types outside `agentkernel/providers/`.
 - Direct business actions in `loop.py`.
 - A second mutable chat-history store beside Session events.
 - Capability mutation by model or tool code.
@@ -55,5 +57,4 @@ Run focused tests after changing a module, then the full suite before handoff.
 
 ## Stage
 
-Current: V0.1 Agent Spine, in-memory and single-agent. Next: V0.2 Persistence + Recovery. Do not start V0.2 behavior in a V0.1 change unless the user explicitly expands scope.
-
+Current: V0.1 Agent Spine plus an optional non-streaming OpenAI-compatible Provider boundary, still in-memory and single-agent. Next: V0.2 Persistence + Recovery. Do not start V0.2 behavior in a V0.1 change unless the user explicitly expands scope.
