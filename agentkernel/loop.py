@@ -6,6 +6,7 @@ from collections.abc import Awaitable
 from typing import TypeVar
 
 from .agent import Agent, AgentState
+from .context import ContextBudget, ContextManager, ContextService
 from .durable_tools import DurableToolExecutor
 from .events import EventType
 from .hooks import HookEvent, HookManager, HookPoint
@@ -37,12 +38,19 @@ class DefaultAgentLoop:
         prompt: PromptService,
         hooks: HookManager | None = None,
         tool_executor: DurableToolExecutor | None = None,
+        context: ContextService | None = None,
+        context_budget: ContextBudget | None = None,
     ) -> None:
         self._llm = llm
         self._tools = tools
         self._prompt = prompt
         self._hooks = hooks or HookManager()
         self._tool_executor = tool_executor or DurableToolExecutor(tools)
+        self._context = context or ContextManager()
+        self._context_budget = context_budget or ContextBudget(
+            max_tokens=128_000,
+            reserved_output_tokens=16_000,
+        )
 
     async def run(self, agent: Agent, user_input: str) -> str:
         """Run one user turn until a final model answer or kernel failure."""
@@ -96,10 +104,16 @@ class DefaultAgentLoop:
                 )
 
                 assembly = self._prompt.assemble(agent.control, self._tools)
-                request = ModelRequest(
-                    messages=agent.session.derive_messages(),
-                    tools=assembly.tools,
+                working_set = self._context.build_working_set(
+                    agent.session,
+                    current_turn=turn,
+                    budget=self._context_budget,
                     system_prompt=assembly.system_prompt,
+                )
+                request = ModelRequest(
+                    messages=working_set.to_messages(),
+                    tools=assembly.tools,
+                    system_prompt=working_set.system_prompt,
                 )
                 response = await self._while_waiting(
                     agent,
