@@ -62,6 +62,7 @@ class DurableToolExecutor:
                 session_id=agent.session_id,
                 tool_call_id=call.call_id,
                 operation_id=self._fresh_operation_id(session),
+                capability_evaluator=self._tools.evaluator_for_agent(agent),
             )
             result = await self._tools.invoke(resolved, call, context)
             return await self._process_result(call, result, context)
@@ -154,6 +155,7 @@ class DurableToolExecutor:
             tool_call_id=operation.tool_call.call_id,
             operation_id=operation.operation_id,
             attempt=max(operation.dispatch_attempts, 1),
+            capability_evaluator=self._tools.evaluator_for_agent(agent),
         )
         try:
             observed = await definition.reconcile(context)
@@ -238,6 +240,7 @@ class DurableToolExecutor:
             tool_call_id=call.call_id,
             operation_id=operation_id,
             attempt=attempt,
+            capability_evaluator=self._tools.evaluator_for_agent(agent),
         )
         result = await self._tools.invoke(definition, call, context)
         result = await self._process_result(call, result, context)

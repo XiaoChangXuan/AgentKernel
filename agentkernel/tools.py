@@ -12,6 +12,8 @@ from typing import Mapping, Protocol, TypeAlias
 
 from .agent import AgentControlBlock
 from .capabilities import (
+    AuthorizationDecision,
+    AuthorizationRequest,
     CapabilityEvaluator,
     legacy_tool_request,
 )
@@ -59,6 +61,7 @@ class ToolExecutionContext:
     tool_call_id: str
     operation_id: str
     attempt: int = 1
+    capability_evaluator: CapabilityEvaluator | None = None
 
     def __post_init__(self) -> None:
         if not all(
@@ -98,9 +101,19 @@ class ToolDefinition:
     concurrency: ToolConcurrency = ToolConcurrency.PARALLEL
     effect_kind: ToolEffectKind = ToolEffectKind.READ_ONLY
     reconcile_handler: ReconcileHandler | None = None
+    required_action: str | None = None
+    required_resource: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect_kind", ToolEffectKind(self.effect_kind))
+        if (self.required_action is None) != (self.required_resource is None):
+            raise ValueError(
+                "required_action and required_resource must be provided together"
+            )
+        for name in ("required_action", "required_resource"):
+            value = getattr(self, name)
+            if value is not None and not value:
+                raise ValueError(f"{name} must not be empty")
         if self.timeout_seconds is not None and self.timeout_seconds <= 0:
             raise ValueError("tool timeout_seconds must be positive")
         if (
@@ -172,24 +185,17 @@ class ToolRegistry:
             concurrency=definition.concurrency,
             effect_kind=definition.effect_kind,
             reconcile_handler=definition.reconcile_handler,
+            required_action=definition.required_action,
+            required_resource=definition.required_resource,
         )
 
     def model_schemas(self, agent: AgentControlBlock) -> tuple[ToolSchema, ...]:
         """Project only model-facing fields for tools the agent may execute."""
 
         schemas: list[ToolSchema] = []
-        evaluator = CapabilityEvaluator.from_legacy_capabilities(
-            agent_id=agent.agent_id,
-            capabilities=agent.capabilities,
-        )
+        evaluator = _evaluator_for_agent(agent)
         for definition in self._definitions.values():
-            capability = definition.required_capability
-            if capability is not None and not evaluator.authorize(
-                legacy_tool_request(
-                    agent_id=agent.agent_id,
-                    required_capability=capability,
-                )
-            ).allowed:
+            if not _is_authorized(definition, agent, evaluator):
                 continue
             schemas.append(
                 ToolSchema(
@@ -199,6 +205,11 @@ class ToolRegistry:
                 )
             )
         return tuple(schemas)
+
+    def evaluator_for_agent(self, agent: AgentControlBlock) -> CapabilityEvaluator:
+        """Build the effective tool/resource evaluator for Kernel use."""
+
+        return _evaluator_for_agent(agent)
 
     async def execute(
         self,
@@ -222,6 +233,7 @@ class ToolRegistry:
             session_id=agent.session_id,
             tool_call_id=call.call_id,
             operation_id=f"op_{uuid.uuid4().hex}",
+            capability_evaluator=_evaluator_for_agent(agent),
         )
         return await self.invoke(resolved, call, context)
 
@@ -239,24 +251,14 @@ class ToolRegistry:
                 ErrorCode.ENOENT,
                 f'tool "{call.name}" is not registered',
             )
-        capability = definition.required_capability
-        if capability is not None:
-            evaluator = CapabilityEvaluator.from_legacy_capabilities(
-                agent_id=agent.agent_id,
-                capabilities=agent.capabilities,
+        evaluator = _evaluator_for_agent(agent)
+        decision = _authorization_decision(definition, agent, evaluator)
+        if not decision.allowed:
+            return ToolResult.failure(
+                call,
+                ErrorCode.EACCES,
+                decision.reason,
             )
-            decision = evaluator.authorize(
-                legacy_tool_request(
-                    agent_id=agent.agent_id,
-                    required_capability=capability,
-                )
-            )
-            if not decision.allowed:
-                return ToolResult.failure(
-                    call,
-                    ErrorCode.EACCES,
-                    f'agent lacks required capability "{capability}"',
-                )
         return definition
 
     async def invoke(
@@ -286,3 +288,45 @@ class ToolRegistry:
                 f'tool "{call.name}" failed: {error}',
             )
         return ToolResult.success(call, output)
+
+
+def _evaluator_for_agent(agent: AgentControlBlock) -> CapabilityEvaluator:
+    return CapabilityEvaluator.from_agent_capabilities(
+        agent_id=agent.agent_id,
+        capabilities=agent.capabilities,
+        capability_grants=agent.capability_grants,
+    )
+
+
+def _is_authorized(
+    definition: ToolDefinition,
+    agent: AgentControlBlock,
+    evaluator: CapabilityEvaluator,
+) -> bool:
+    return _authorization_decision(definition, agent, evaluator).allowed
+
+
+def _authorization_decision(
+    definition: ToolDefinition,
+    agent: AgentControlBlock,
+    evaluator: CapabilityEvaluator,
+) -> AuthorizationDecision:
+    capability = definition.required_capability
+    if capability is not None:
+        decision = evaluator.authorize(
+            legacy_tool_request(
+                agent_id=agent.agent_id,
+                required_capability=capability,
+            )
+        )
+        if not decision.allowed:
+            return decision
+    if definition.required_action is None or definition.required_resource is None:
+        return AuthorizationDecision(True, "allowed")
+    return evaluator.authorize(
+        AuthorizationRequest(
+            agent_id=agent.agent_id,
+            action=definition.required_action,
+            resource=definition.required_resource,
+        )
+    )

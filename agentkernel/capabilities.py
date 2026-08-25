@@ -9,6 +9,9 @@ from typing import Any
 
 
 TOOL_EXECUTE_ACTION = "tool.execute"
+RESOURCE_READ_ACTION = "resource.read"
+RESOURCE_STAT_ACTION = "resource.stat"
+ARTIFACT_RESOURCE_SCOPE = "artifact://**"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,14 +70,25 @@ class CapabilityEvaluator:
     ) -> "CapabilityEvaluator":
         """Build compatibility grants from V0.1-V0.5 capability strings."""
 
-        return cls(
-            CapabilityGrant(
-                subject=agent_id,
-                action=TOOL_EXECUTE_ACTION,
-                resource_scope=legacy_tool_scope(capability),
-            )
-            for capability in capabilities
-        )
+        grants: list[CapabilityGrant] = []
+        for capability in capabilities:
+            grants.extend(_legacy_capability_grants(agent_id, capability))
+        return cls(grants)
+
+    @classmethod
+    def from_agent_capabilities(
+        cls,
+        *,
+        agent_id: str,
+        capabilities: Iterable[str],
+        capability_grants: Iterable[CapabilityGrant] = (),
+    ) -> "CapabilityEvaluator":
+        """Build one evaluator from legacy strings plus structured grants."""
+
+        legacy_grants: list[CapabilityGrant] = []
+        for capability in capabilities:
+            legacy_grants.extend(_legacy_capability_grants(agent_id, capability))
+        return cls((*legacy_grants, *tuple(capability_grants)))
 
     def authorize(self, request: AuthorizationRequest) -> AuthorizationDecision:
         """Authorize one request against positive grants."""
@@ -116,6 +130,43 @@ def legacy_tool_request(
         action=TOOL_EXECUTE_ACTION,
         resource=legacy_tool_scope(required_capability),
     )
+
+
+def _legacy_capability_grants(
+    agent_id: str,
+    capability: str,
+) -> tuple[CapabilityGrant, ...]:
+    grants = [
+        CapabilityGrant(
+            subject=agent_id,
+            action=TOOL_EXECUTE_ACTION,
+            resource_scope=legacy_tool_scope(capability),
+        )
+    ]
+    if capability == RESOURCE_READ_ACTION:
+        grants.extend(
+            (
+                CapabilityGrant(
+                    subject=agent_id,
+                    action=RESOURCE_READ_ACTION,
+                    resource_scope=ARTIFACT_RESOURCE_SCOPE,
+                ),
+                CapabilityGrant(
+                    subject=agent_id,
+                    action=RESOURCE_STAT_ACTION,
+                    resource_scope=ARTIFACT_RESOURCE_SCOPE,
+                ),
+            )
+        )
+    elif capability == RESOURCE_STAT_ACTION:
+        grants.append(
+            CapabilityGrant(
+                subject=agent_id,
+                action=RESOURCE_STAT_ACTION,
+                resource_scope=ARTIFACT_RESOURCE_SCOPE,
+            )
+        )
+    return tuple(grants)
 
 
 def _scope_matches(grant_scope: str, requested_resource: str) -> bool:

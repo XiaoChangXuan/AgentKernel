@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Iterable
 
+from .capabilities import CapabilityGrant
 from .session import Session
 
 
@@ -75,6 +76,7 @@ class AgentControlBlock:
     capabilities: frozenset[str]
     capability_bounding_set: frozenset[str]
     budget: AgentBudget
+    capability_grants: tuple[CapabilityGrant, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
@@ -83,6 +85,7 @@ class AgentControlBlock:
             "capability_bounding_set",
             frozenset(self.capability_bounding_set),
         )
+        object.__setattr__(self, "capability_grants", tuple(self.capability_grants))
         if not self.agent_id or not self.session_id:
             raise ValueError("agent_id and session_id must not be empty")
         if not self.capabilities <= self.capability_bounding_set:
@@ -90,6 +93,13 @@ class AgentControlBlock:
             raise CapabilityBoundError(
                 f"effective capabilities exceed bounding set: {', '.join(excess)}"
             )
+        for grant in self.capability_grants:
+            if not isinstance(grant, CapabilityGrant):
+                raise TypeError("capability_grants must contain CapabilityGrant values")
+            if grant.subject != self.agent_id:
+                raise CapabilityBoundError(
+                    "capability grant subject must match agent_id"
+                )
 
     def has_capability(self, capability: str) -> bool:
         """Check one exact effective capability."""
@@ -125,6 +135,7 @@ class Agent:
         session: Session,
         capabilities: Iterable[str] = (),
         capability_bounding_set: Iterable[str] | None = None,
+        capability_grants: Iterable[CapabilityGrant] = (),
         budget: AgentBudget | None = None,
         parent_agent_id: str | None = None,
     ) -> "Agent":
@@ -144,6 +155,7 @@ class Agent:
             capabilities=effective,
             capability_bounding_set=bounding,
             budget=budget or AgentBudget(),
+            capability_grants=tuple(capability_grants),
         )
         control.transition(AgentState.READY)
         return cls(control=control, session=session)

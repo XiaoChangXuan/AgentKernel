@@ -30,7 +30,11 @@ def resource_tool_definitions(
         if not isinstance(uri, str):
             raise ToolExecutionError(ErrorCode.EINVAL, "uri must be a string")
         try:
-            return resources.stat(uri, owner=_owner(context)).as_dict()
+            return resources.stat(
+                uri,
+                owner=_owner(context),
+                capability_evaluator=context.capability_evaluator,
+            ).as_dict()
         except ResourceError as error:
             raise _tool_error(error) from error
 
@@ -48,7 +52,11 @@ def resource_tool_definitions(
             raise ToolExecutionError(ErrorCode.EINVAL, "limit must be an integer")
         try:
             result = resources.read(
-                uri, owner=_owner(context), offset=offset, limit=limit
+                uri,
+                owner=_owner(context),
+                offset=offset,
+                limit=limit,
+                capability_evaluator=context.capability_evaluator,
             )
         except ResourceError as error:
             raise _tool_error(error) from error

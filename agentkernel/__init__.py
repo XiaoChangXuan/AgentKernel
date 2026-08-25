@@ -8,10 +8,14 @@ from .agent import (
     CapabilityBoundError,
 )
 from .capabilities import (
+    ARTIFACT_RESOURCE_SCOPE,
     AuthorizationDecision,
     AuthorizationRequest,
     CapabilityEvaluator,
     CapabilityGrant,
+    RESOURCE_READ_ACTION,
+    RESOURCE_STAT_ACTION,
+    TOOL_EXECUTE_ACTION,
 )
 from .context import (
     ApproximateTokenEstimator,
@@ -136,6 +140,7 @@ __all__ = [
     "AgentBudget",
     "AgentControlBlock",
     "AgentState",
+    "ARTIFACT_RESOURCE_SCOPE",
     "AuthorizationDecision",
     "AuthorizationRequest",
     "CapabilityBoundError",
@@ -198,6 +203,8 @@ __all__ = [
     "OperationRecoveryClassification",
     "PersistedSession",
     "RecoveryAnalysis",
+    "RESOURCE_READ_ACTION",
+    "RESOURCE_STAT_ACTION",
     "ExternalizationDecision",
     "LocalResourceStore",
     "ResourceAccessDenied",
@@ -234,6 +241,7 @@ __all__ = [
     "ToolCall",
     "ToolConcurrency",
     "ToolDefinition",
+    "TOOL_EXECUTE_ACTION",
     "ToolError",
     "ToolExecutionContext",
     "ToolExecutionError",

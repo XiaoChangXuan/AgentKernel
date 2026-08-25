@@ -9,6 +9,12 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING
 
+from ..capabilities import (
+    AuthorizationRequest,
+    CapabilityEvaluator,
+    RESOURCE_READ_ACTION,
+    RESOURCE_STAT_ACTION,
+)
 from ..events import EventType, SessionEvent
 from .model import (
     ResourceHandle,
@@ -114,8 +120,16 @@ class ResourceService:
         self.metrics.resource_bytes_stored += len(data)
         return metadata.to_handle()
 
-    def stat(self, uri: str, *, owner: ResourceOwner) -> ResourceHandle:
-        return self._resolve(uri, owner).to_handle()
+    def stat(
+        self,
+        uri: str,
+        *,
+        owner: ResourceOwner,
+        capability_evaluator: CapabilityEvaluator | None = None,
+    ) -> ResourceHandle:
+        metadata = self._resolve(uri, owner)
+        self._authorize(metadata, owner, RESOURCE_STAT_ACTION, capability_evaluator)
+        return metadata.to_handle()
 
     def read(
         self,
@@ -124,8 +138,10 @@ class ResourceService:
         owner: ResourceOwner,
         offset: int = 0,
         limit: int | None = None,
+        capability_evaluator: CapabilityEvaluator | None = None,
     ) -> ResourceRead:
         metadata = self._resolve(uri, owner)
+        self._authorize(metadata, owner, RESOURCE_READ_ACTION, capability_evaluator)
         selected_limit = self.limits.max_read_bytes if limit is None else limit
         self._validate_range(metadata, offset, selected_limit)
         try:
@@ -163,6 +179,27 @@ class ResourceService:
         if metadata.owner != owner:
             raise ResourceAccessDenied("resource owner does not match caller")
         return metadata
+
+    @staticmethod
+    def _authorize(
+        metadata: ResourceMetadata,
+        owner: ResourceOwner,
+        action: str,
+        capability_evaluator: CapabilityEvaluator | None,
+    ) -> None:
+        if capability_evaluator is None:
+            return
+        decision = capability_evaluator.authorize(
+            AuthorizationRequest(
+                agent_id=owner.agent_id,
+                action=action,
+                resource=metadata.uri,
+            )
+        )
+        if not decision.allowed:
+            raise ResourceAccessDenied(
+                f"agent lacks {action} capability for resource"
+            )
 
     def _validate_range(
         self, metadata: ResourceMetadata, offset: int, limit: int
