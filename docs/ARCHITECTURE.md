@@ -1,10 +1,10 @@
-# AgentKernel V0.4 phase 2 architecture
+# AgentKernel V0.4 architecture
 
 This document describes implemented behavior. The roadmap and long-term design constraints live in [`IMPLEMENTATION_BLUEPRINT.md`](IMPLEMENTATION_BLUEPRINT.md).
 
 ## Boundary
 
-AgentKernel V0.4 phase 2 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, and pressure-driven management of each model request's physical Context working set. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection/reclamation boundaries, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, Tool, token-estimation, Context-policy, and reclaim-policy implementations remain replaceable seams; they do not own Kernel truth.
+AgentKernel V0.4 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, and pressure-driven management of each model request's physical Context working set. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection/reclamation boundaries, complete-request accounting, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, Model, Tool, token-estimation, Context-policy, and reclaim-policy implementations remain replaceable seams; they do not own Kernel truth.
 
 ## Modules
 
@@ -70,19 +70,32 @@ repeat:
 ## Context VM
 
 ```text
-Session Event Log + current host system prompt
+Durable Session Event Log (source of truth)
                   ↓
-          ContextProjector
+          Context Projection
                   ↓
             Context Pages
                   ↓
-          ContextPolicy
+       Policy / Working Set
                   ↓
-       ContextManager selection
+      Request Token Accounting
                   ↓
-       ContextWorkingSet + metrics
+          Context Pressure
+                  ↓
+              Reclaim
+       ┌──────────┼──────────┐
+    Eviction   Tool Result   Compaction
+                 Pruning
                   ↓
              ModelRequest
+                  ↓
+              Provider
+                  ↓ overflow
+            Forced Reclaim
+                  ↓
+       Rebuild Smaller Request
+                  ↓
+             Retry Once
 ```
 
 The key responsibility split is:
