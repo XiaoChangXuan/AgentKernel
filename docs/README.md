@@ -65,6 +65,7 @@ necessarily current authoritative specifications.
 - [V0.8 Process Tree Implementation](implementation/V0.8_PROCESS_TREE_IMPLEMENTATION.md)
 - [V0.8 Capability Delegation Implementation](implementation/V0.8_CAPABILITY_DELEGATION_IMPLEMENTATION.md)
 - [V0.8 Kernel IPC Implementation](implementation/V0.8_KERNEL_IPC_IMPLEMENTATION.md)
+- [V0.8 Resource Sharing Implementation](implementation/V0.8_RESOURCE_SHARING_IMPLEMENTATION.md)
 
 ## Releases
 

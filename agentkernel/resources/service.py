@@ -25,6 +25,8 @@ from .model import (
     ResourceOwner,
     ResourceRead,
 )
+from ..protocol import JsonValue
+from .sharing import ResourceShareDecision, ResourceShareRegistry, ResourceShareRequest
 from .store import ResourceNotFound, ResourceStore, ResourceStoreError
 
 if TYPE_CHECKING:
@@ -63,6 +65,7 @@ class ResourceService:
         metrics: ResourceMetrics | None = None,
         resource_id_factory: ResourceIdFactory | None = None,
         handle_id_factory: HandleIdFactory | None = None,
+        share_registry: ResourceShareRegistry | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._store = store
@@ -70,6 +73,7 @@ class ResourceService:
         self.metrics = metrics or ResourceMetrics()
         self._resource_id_factory = resource_id_factory or _new_resource_id
         self._handle_id_factory = handle_id_factory or _new_handle_id
+        self._share_registry = share_registry
         self._clock = clock
 
     def create_artifact(
@@ -127,7 +131,7 @@ class ResourceService:
         owner: ResourceOwner,
         capability_evaluator: CapabilityEvaluator | None = None,
     ) -> ResourceHandle:
-        metadata = self._resolve(uri, owner)
+        metadata = self._resolve(uri)
         self._authorize(metadata, owner, RESOURCE_STAT_ACTION, capability_evaluator)
         return metadata.to_handle()
 
@@ -140,7 +144,7 @@ class ResourceService:
         limit: int | None = None,
         capability_evaluator: CapabilityEvaluator | None = None,
     ) -> ResourceRead:
-        metadata = self._resolve(uri, owner)
+        metadata = self._resolve(uri)
         self._authorize(metadata, owner, RESOURCE_READ_ACTION, capability_evaluator)
         selected_limit = self.limits.max_read_bytes if limit is None else limit
         self._validate_range(metadata, offset, selected_limit)
@@ -157,6 +161,42 @@ class ResourceService:
         self.metrics.resource_bytes_read += len(data)
         return ResourceRead(metadata.to_handle(), offset, data)
 
+    def share(
+        self,
+        uri: str,
+        *,
+        owner: ResourceOwner,
+        grantee_agent_id: str,
+        allowed_actions: Iterable[str],
+        record_session: "Session",
+        share_id: str | None = None,
+        correlation_id: str | None = None,
+        expires_at: JsonValue = None,
+    ) -> ResourceShareDecision:
+        """Create an exact ResourceShareGrant from the resource owner Agent."""
+
+        if self._share_registry is None:
+            return ResourceShareDecision(False, "sharing_not_configured")
+        try:
+            metadata = self._resolve(uri)
+        except ResourceUnknown:
+            return ResourceShareDecision(False, "resource_not_found")
+        if metadata.owner != owner:
+            return ResourceShareDecision(False, "not_resource_owner")
+        return self._share_registry.create_share(
+            ResourceShareRequest(
+                owner_agent_id=owner.agent_id,
+                grantee_agent_id=grantee_agent_id,
+                resource_id=metadata.resource_id,
+                allowed_actions=tuple(allowed_actions),
+                share_id=share_id,
+                correlation_id=correlation_id,
+                expires_at=expires_at,
+            ),
+            resource_metadata=metadata,
+            record_session=record_session,
+        )
+
     def orphaned_resources(self, session: "Session") -> tuple[ResourceMetadata, ...]:
         """Identify committed owner resources absent from durable Tool Results."""
 
@@ -168,7 +208,7 @@ class ResourceService:
             and metadata.resource_id not in referenced
         )
 
-    def _resolve(self, uri: str, owner: ResourceOwner) -> ResourceMetadata:
+    def _resolve(self, uri: str) -> ResourceMetadata:
         resource_id = self._parse_uri(uri)
         try:
             metadata = self._store.stat(resource_id)
@@ -176,22 +216,24 @@ class ResourceService:
             raise ResourceUnknown("resource handle is unknown") from error
         except ResourceStoreError as error:
             raise ResourceError("resource metadata is unavailable") from error
-        if metadata.owner != owner:
-            raise ResourceAccessDenied("resource owner does not match caller")
         return metadata
 
-    @staticmethod
     def _authorize(
+        self,
         metadata: ResourceMetadata,
-        owner: ResourceOwner,
+        caller: ResourceOwner,
         action: str,
         capability_evaluator: CapabilityEvaluator | None,
     ) -> None:
-        if capability_evaluator is None:
+        if metadata.owner == caller and capability_evaluator is None:
             return
+        if capability_evaluator is None:
+            raise ResourceAccessDenied(
+                f"agent lacks {action} capability for resource"
+            )
         decision = capability_evaluator.authorize(
             AuthorizationRequest(
-                agent_id=owner.agent_id,
+                agent_id=caller.agent_id,
                 action=action,
                 resource=metadata.uri,
             )
@@ -200,6 +242,17 @@ class ResourceService:
             raise ResourceAccessDenied(
                 f"agent lacks {action} capability for resource"
             )
+        if metadata.owner == caller:
+            return
+        if self._share_registry is None:
+            raise ResourceAccessDenied("resource is not shared with caller")
+        if not self._share_registry.is_shared_with(
+            resource_id=metadata.resource_id,
+            grantee_agent_id=caller.agent_id,
+            owner_agent_id=metadata.owner.agent_id,
+            action=action,
+        ):
+            raise ResourceAccessDenied("resource is not shared with caller")
 
     def _validate_range(
         self, metadata: ResourceMetadata, offset: int, limit: int

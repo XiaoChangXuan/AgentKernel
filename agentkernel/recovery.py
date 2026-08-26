@@ -147,6 +147,7 @@ def analyze_recovery(
     process_creation_by_process: dict[str, str] = {}
     capability_delegation_facts: dict[str, dict[str, JsonValue]] = {}
     capability_delegation_by_child_grant: dict[str, str] = {}
+    resource_share_facts: dict[str, dict[str, JsonValue]] = {}
 
     def fail(message: str) -> NoReturn:
         analysis = RecoveryAnalysis(
@@ -410,6 +411,10 @@ def analyze_recovery(
                 capability_delegation_by_child_grant,
                 fail,
             )
+            continue
+
+        if event.type is EventType.RESOURCE_SHARED:
+            _validate_resource_shared_event(data, resource_share_facts, fail)
             continue
 
         if event.type in {
@@ -883,6 +888,29 @@ def _validate_capability_delegated_event(
         )
     delegation_facts[provenance.delegation_id] = snapshot
     delegation_by_child_grant[fingerprint] = provenance.delegation_id
+
+
+def _validate_resource_shared_event(
+    data: Mapping[str, JsonValue],
+    resource_share_facts: dict[str, dict[str, JsonValue]],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    from .resources.sharing import ResourceShareGrant
+
+    try:
+        grant = ResourceShareGrant.from_payload(data)
+        payload = grant.as_payload()
+    except (TypeError, ValueError) as error:
+        fail(f"invalid resource/shared event: {error}")
+    if payload != dict(data):
+        fail("resource/shared payload is not canonical")
+    snapshot = copy.deepcopy(dict(data))
+    existing = resource_share_facts.get(grant.share_id)
+    if existing is not None:
+        if existing != snapshot:
+            fail(f"conflicting resource/shared share_id: {grant.share_id}")
+        return
+    resource_share_facts[grant.share_id] = snapshot
 
 
 def _validate_ipc_audit_event(
