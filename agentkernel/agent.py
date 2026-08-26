@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Iterable, Mapping
 
-from .capabilities import CapabilityGrant
+from .capabilities import (
+    CapabilityDelegator,
+    CapabilityGrant,
+    DelegateCapabilityRequest,
+    DelegationDecision,
+    DelegationProvenance,
+    capability_grant_from_payload,
+    grant_fingerprint,
+    legacy_capability_grants,
+)
 from .events import EventType, SessionEvent
 from .protocol import JsonValue
 from .session import Session
@@ -92,6 +101,10 @@ class AgentTreeError(AgentRegistryError):
 
 class AgentRegistryCorruptionError(AgentRegistryError):
     """Raised when durable Agent identity facts cannot be replayed safely."""
+
+
+class CapabilityDelegationError(AgentRegistryError):
+    """Raised when delegation cannot be durably installed."""
 
 
 _ALLOWED_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
@@ -228,12 +241,23 @@ class _AgentCreationFact:
     creation_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class _CapabilityDelegationFact:
+    grant: CapabilityGrant
+    provenance: DelegationProvenance
+    payload: dict[str, JsonValue]
+
+
 class AgentRegistry:
     """Kernel-owned registry for Agent identity and parent-child relations."""
 
     def __init__(self) -> None:
         self._agents: dict[str, AgentControlBlock] = {}
         self._children: dict[str, list[str]] = {}
+        self._delegations: dict[str, _CapabilityDelegationFact] = {}
+        self._delegation_by_child_grant: dict[str, str] = {}
+        self._delegation_provenance_by_grant: dict[str, DelegationProvenance] = {}
+        self._delegator = CapabilityDelegator()
 
     def create_root(
         self,
@@ -382,11 +406,172 @@ class AgentRegistry:
             current = control.parent_agent_id
         return tuple(reversed(reversed_lineage))
 
+    def install_capability_grants(
+        self,
+        agent_id: str,
+        grants: Iterable[CapabilityGrant],
+    ) -> AgentControlBlock:
+        """Install Host-provided current grants without writing durable facts."""
+
+        control = self.get(agent_id)
+        additions = tuple(grants)
+        for grant in additions:
+            if not isinstance(grant, CapabilityGrant):
+                raise TypeError("grants must contain CapabilityGrant values")
+            if grant.subject != agent_id:
+                raise CapabilityBoundError(
+                    "capability grant subject must match agent_id"
+                )
+        merged = list(control.capability_grants)
+        fingerprints = {grant_fingerprint(grant) for grant in merged}
+        for grant in additions:
+            fingerprint = grant_fingerprint(grant)
+            if fingerprint in fingerprints:
+                continue
+            merged.append(grant)
+            fingerprints.add(fingerprint)
+        updated = replace(control, capability_grants=tuple(merged))
+        self._agents[agent_id] = updated
+        return updated
+
+    def delegation_provenance(
+        self,
+        delegation_id: str,
+    ) -> DelegationProvenance:
+        """Return the durable provenance for one installed delegation."""
+
+        try:
+            return self._delegations[delegation_id].provenance
+        except KeyError as error:
+            raise CapabilityDelegationError(
+                f"delegation not found: {delegation_id}"
+            ) from error
+
+    def delegate_capability(
+        self,
+        request: DelegateCapabilityRequest,
+        *,
+        record_session: Session | None = None,
+        record: bool = True,
+    ) -> DelegationDecision:
+        """Delegate narrowed authority from a direct parent Agent to its child."""
+
+        if request.parent_agent_id not in self._agents:
+            return DelegationDecision(False, "parent_agent_not_found")
+        if request.child_agent_id not in self._agents:
+            return DelegationDecision(False, "child_agent_not_found")
+        parent = self._agents[request.parent_agent_id]
+        child = self._agents[request.child_agent_id]
+        if child.parent_agent_id != parent.agent_id:
+            return DelegationDecision(False, "not_direct_child")
+        if record:
+            if record_session is None:
+                raise CapabilityDelegationError(
+                    "record_session is required when recording a delegation"
+                )
+            if record_session.session_id != child.session_id:
+                raise AgentTreeError(
+                    "capability/delegated must be written to the child Agent session"
+                )
+        decision = self._delegator.delegate(
+            request,
+            parent_grants=_effective_capability_grants(parent),
+            parent_provenance_by_grant=self._delegation_provenance_by_grant,
+        )
+        if not decision.allowed:
+            return decision
+        assert decision.delegated_grant is not None
+        assert decision.provenance is not None
+        payload = decision.provenance.as_payload(decision.delegated_grant)
+        if self._delegation_is_already_installed(
+            decision.delegated_grant,
+            decision.provenance,
+            payload,
+        ):
+            return decision
+        if record:
+            assert record_session is not None
+            record_session.append(EventType.CAPABILITY_DELEGATED, payload)
+        self._install_delegation(
+            decision.delegated_grant,
+            decision.provenance,
+            payload,
+        )
+        return decision
+
+    def replay_delegations(
+        self,
+        sessions: Iterable[Session],
+    ) -> tuple[DelegationDecision, ...]:
+        """Replay durable delegation facts against current parent authority."""
+
+        facts = _capability_delegation_facts_from_sessions(sessions)
+        decisions: list[DelegationDecision] = []
+        for fact in sorted(
+            facts.values(),
+            key=lambda item: (
+                item.provenance.depth,
+                item.provenance.delegation_id,
+            ),
+        ):
+            if fact.provenance.parent_agent_id not in self._agents:
+                raise AgentRegistryCorruptionError(
+                    "capability/delegated references missing parent Agent: "
+                    f"{fact.provenance.parent_agent_id}"
+                )
+            if fact.provenance.child_agent_id not in self._agents:
+                raise AgentRegistryCorruptionError(
+                    "capability/delegated references missing child Agent: "
+                    f"{fact.provenance.child_agent_id}"
+                )
+            if (
+                self._agents[fact.provenance.child_agent_id].parent_agent_id
+                != fact.provenance.parent_agent_id
+            ):
+                raise AgentRegistryCorruptionError(
+                    "capability/delegated parent does not match Agent tree"
+                )
+            decision = self.delegate_capability(
+                DelegateCapabilityRequest(
+                    parent_agent_id=fact.provenance.parent_agent_id,
+                    child_agent_id=fact.provenance.child_agent_id,
+                    action=fact.provenance.action,
+                    resource_scope=fact.provenance.resource_scope,
+                    constraints=fact.provenance.constraints,
+                    parent_grant_fingerprint=(
+                        fact.provenance.parent_grant_fingerprint
+                    ),
+                    delegation_id=fact.provenance.delegation_id,
+                    correlation_id=fact.provenance.correlation_id,
+                    expires_at=fact.provenance.expires_at,
+                ),
+                record=False,
+            )
+            if decision.allowed:
+                assert decision.delegated_grant is not None
+                assert decision.provenance is not None
+                if (
+                    decision.provenance.as_payload(decision.delegated_grant)
+                    != fact.payload
+                ):
+                    raise AgentRegistryCorruptionError(
+                        "capability/delegated replay changed provenance"
+                    )
+            decisions.append(decision)
+        return tuple(decisions)
+
     @classmethod
-    def reconstruct(cls, sessions: Iterable[Session]) -> "AgentRegistry":
+    def reconstruct(
+        cls,
+        sessions: Iterable[Session],
+        *,
+        current_capability_grants: Mapping[str, Iterable[CapabilityGrant]]
+        | None = None,
+    ) -> "AgentRegistry":
         """Rebuild an AgentRegistry from durable agent/created facts."""
 
-        facts = _agent_creation_facts_from_sessions(sessions)
+        session_tuple = tuple(sessions)
+        facts = _agent_creation_facts_from_sessions(session_tuple)
         registry = cls()
         remaining = dict(facts)
         while remaining:
@@ -407,13 +592,25 @@ class AgentRegistry:
                     "agent tree contains unresolved parent relation or cycle: "
                     f"{unresolved}"
                 )
+        for agent_id, grants in (current_capability_grants or {}).items():
+            registry.install_capability_grants(agent_id, grants)
+        registry.replay_delegations(session_tuple)
         return registry
 
     @classmethod
-    def from_sessions(cls, sessions: Iterable[Session]) -> "AgentRegistry":
+    def from_sessions(
+        cls,
+        sessions: Iterable[Session],
+        *,
+        current_capability_grants: Mapping[str, Iterable[CapabilityGrant]]
+        | None = None,
+    ) -> "AgentRegistry":
         """Compatibility alias for reconstruct()."""
 
-        return cls.reconstruct(sessions)
+        return cls.reconstruct(
+            sessions,
+            current_capability_grants=current_capability_grants,
+        )
 
     def _validate_root_candidate(self, control: AgentControlBlock) -> None:
         if control.parent_agent_id is not None:
@@ -456,6 +653,48 @@ class AgentRegistry:
             self._children.setdefault(control.parent_agent_id, []).append(
                 control.agent_id
             )
+
+    def _delegation_is_already_installed(
+        self,
+        grant: CapabilityGrant,
+        provenance: DelegationProvenance,
+        payload: Mapping[str, JsonValue],
+    ) -> bool:
+        existing = self._delegations.get(provenance.delegation_id)
+        if existing is not None:
+            if existing.payload != dict(payload):
+                raise AgentRegistryCorruptionError(
+                    "conflicting capability delegation id: "
+                    f"{provenance.delegation_id}"
+                )
+            return True
+        grant_fpr = grant_fingerprint(grant)
+        existing_delegation_id = self._delegation_by_child_grant.get(grant_fpr)
+        if existing_delegation_id is not None:
+            raise AgentRegistryCorruptionError(
+                "conflicting capability delegation child grant provenance: "
+                f"{existing_delegation_id}, {provenance.delegation_id}"
+            )
+        return False
+
+    def _install_delegation(
+        self,
+        grant: CapabilityGrant,
+        provenance: DelegationProvenance,
+        payload: Mapping[str, JsonValue],
+    ) -> None:
+        if self._delegation_is_already_installed(grant, provenance, payload):
+            return
+        self.install_capability_grants(provenance.child_agent_id, (grant,))
+        fact = _CapabilityDelegationFact(
+            grant=grant,
+            provenance=provenance,
+            payload=dict(payload),
+        )
+        grant_fpr = grant_fingerprint(grant)
+        self._delegations[provenance.delegation_id] = fact
+        self._delegation_by_child_grant[grant_fpr] = provenance.delegation_id
+        self._delegation_provenance_by_grant[grant_fpr] = provenance
 
     @staticmethod
     def _append_agent_created(
@@ -511,6 +750,62 @@ def _agent_creation_facts_from_sessions(
             facts[fact.agent_id] = fact
     _validate_reconstructed_facts(facts)
     return facts
+
+
+def _capability_delegation_facts_from_sessions(
+    sessions: Iterable[Session],
+) -> dict[str, _CapabilityDelegationFact]:
+    facts: dict[str, _CapabilityDelegationFact] = {}
+    facts_by_grant: dict[str, _CapabilityDelegationFact] = {}
+    for session in sessions:
+        for event in session.events:
+            if event.type is not EventType.CAPABILITY_DELEGATED:
+                continue
+            fact = _capability_delegation_fact_from_event(event.data)
+            existing = facts.get(fact.provenance.delegation_id)
+            if existing is not None:
+                if existing.payload != fact.payload:
+                    raise AgentRegistryCorruptionError(
+                        "conflicting capability delegation id: "
+                        f"{fact.provenance.delegation_id}"
+                    )
+                continue
+            grant_fpr = grant_fingerprint(fact.grant)
+            existing_grant = facts_by_grant.get(grant_fpr)
+            if existing_grant is not None:
+                raise AgentRegistryCorruptionError(
+                    "conflicting capability delegation child grant provenance: "
+                    f"{existing_grant.provenance.delegation_id}, "
+                    f"{fact.provenance.delegation_id}"
+                )
+            facts[fact.provenance.delegation_id] = fact
+            facts_by_grant[grant_fpr] = fact
+    return facts
+
+
+def _capability_delegation_fact_from_event(
+    data: Mapping[str, JsonValue],
+) -> _CapabilityDelegationFact:
+    try:
+        provenance = DelegationProvenance.from_payload(data)
+        raw_grant = data.get("child_grant")
+        if not isinstance(raw_grant, Mapping):
+            raise TypeError("child_grant must be an object")
+        grant = capability_grant_from_payload(raw_grant)
+        payload = provenance.as_payload(grant)
+    except (TypeError, ValueError) as error:
+        raise AgentRegistryCorruptionError(
+            f"invalid capability/delegated event: {error}"
+        ) from error
+    if payload != dict(data):
+        raise AgentRegistryCorruptionError(
+            "capability/delegated payload is not canonical"
+        )
+    return _CapabilityDelegationFact(
+        grant=grant,
+        provenance=provenance,
+        payload=payload,
+    )
 
 
 def _agent_creation_fact_from_event(
@@ -585,6 +880,15 @@ def _control_from_creation_fact(fact: _AgentCreationFact) -> AgentControlBlock:
     )
     control.transition(AgentState.READY)
     return control
+
+
+def _effective_capability_grants(
+    control: AgentControlBlock,
+) -> tuple[CapabilityGrant, ...]:
+    grants: list[CapabilityGrant] = list(control.capability_grants)
+    for capability in sorted(control.capabilities):
+        grants.extend(legacy_capability_grants(control.agent_id, capability))
+    return tuple(grants)
 
 
 def _required_string(data: Mapping[str, JsonValue], name: str) -> str:

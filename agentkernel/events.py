@@ -26,6 +26,7 @@ class EventType(StrEnum):
     TOOL_RECONCILE = "tool/reconcile"
     AUTHORIZATION_GRANTED = "authorization/granted"
     AUTHORIZATION_DENIED = "authorization/denied"
+    CAPABILITY_DELEGATED = "capability/delegated"
     TOOL_RESULT = "tool/result"
     CONTEXT_COMPACTION_REQUESTED = "context/compaction-requested"
     CONTEXT_COMPACTION_STARTED = "context/compaction-started"
