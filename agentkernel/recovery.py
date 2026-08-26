@@ -48,6 +48,7 @@ class DurableOperationRecovery:
     last_reconcile_status: ReconcileStatus | None = None
     output: JsonValue = None
     error_code: ErrorCode | None = None
+    authorization: Mapping[str, JsonValue] | None = None
 
 
 @dataclass(slots=True)
@@ -64,6 +65,7 @@ class _OperationState:
     last_reconcile_status: ReconcileStatus | None = None
     output: JsonValue = None
     error_code: ErrorCode | None = None
+    authorization: Mapping[str, JsonValue] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +267,7 @@ def analyze_recovery(
                 fail(f"invalid tool/prepare effect_kind: {error}")
             if effect_kind is ToolEffectKind.READ_ONLY:
                 fail("READ_ONLY tools must not create durable prepare records")
+            authorization = _optional_authorization_context(data, fail)
             assert active_turn is not None
             assert active_step is not None
             operations[operation_id] = _OperationState(
@@ -273,6 +276,7 @@ def analyze_recovery(
                 effect_kind=effect_kind,
                 turn=active_turn,
                 step=active_step,
+                authorization=authorization,
             )
             operation_by_call[tool_call_id] = operation_id
             continue
@@ -294,6 +298,20 @@ def analyze_recovery(
                 or state.last_reconcile_status is ReconcileStatus.NOT_FOUND
             ):
                 fail("re-dispatch is not allowed by the durable operation state")
+            authorization = _optional_authorization_context(data, fail)
+            if state.authorization is not None:
+                if authorization is None:
+                    fail(
+                        "tool/dispatch authorization must match tool/prepare "
+                        "authorization"
+                    )
+                _require_authorization_context_match(
+                    state.authorization,
+                    authorization,
+                    fail,
+                )
+            elif authorization is not None:
+                state.authorization = authorization
             state.dispatch_attempts = attempt
             state.aborted = False
             state.error_code = None
@@ -325,8 +343,6 @@ def analyze_recovery(
             _require_operation_step(state, active_turn, active_step, fail)
             if state.committed:
                 fail("tool/abort cannot follow tool/commit")
-            if state.dispatch_attempts == 0:
-                fail("tool/abort requires a prior dispatch")
             try:
                 error_code = ErrorCode(
                     _non_empty_string(data, "error_code", fail)
@@ -334,6 +350,11 @@ def analyze_recovery(
             except ValueError as error:
                 fail(f"invalid tool/abort error_code: {error}")
             _non_empty_string(data, "message", fail)
+            if state.dispatch_attempts == 0 and error_code is not ErrorCode.EACCES:
+                fail(
+                    "tool/abort requires a prior dispatch unless authorization "
+                    "was denied"
+                )
             state.aborted = True
             state.error_code = error_code
             continue
@@ -361,6 +382,14 @@ def analyze_recovery(
             if "message" in data and not isinstance(data["message"], str):
                 fail("tool/reconcile message must be a string")
             state.last_reconcile_status = observed
+            continue
+
+        if event.type in {
+            EventType.AUTHORIZATION_GRANTED,
+            EventType.AUTHORIZATION_DENIED,
+        }:
+            _require_step(data, active_turn, active_step, fail)
+            _validate_authorization_event(data, pending_calls, fail)
             continue
 
         if event.type is EventType.TOOL_RESULT:
@@ -563,6 +592,67 @@ def _non_negative_int(
     return value
 
 
+def _optional_authorization_context(
+    data: Mapping[str, JsonValue],
+    fail: Callable[[str], NoReturn],
+) -> dict[str, JsonValue] | None:
+    raw = data.get("authorization")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        fail("authorization context must be an object")
+    _validate_authorization_context(raw, fail)
+    return copy.deepcopy(dict(raw))
+
+
+def _validate_authorization_context(
+    data: Mapping[str, JsonValue],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    _non_empty_string(data, "agent_id", fail)
+    _non_empty_string(data, "action", fail)
+    _non_empty_string(data, "resource_scope", fail)
+    _non_empty_string(data, "reason", fail)
+    matched = data.get("matched_grant")
+    if matched is None:
+        return
+    if not isinstance(matched, Mapping):
+        fail("authorization matched_grant must be an object")
+    _non_empty_string(matched, "subject", fail)
+    _non_empty_string(matched, "action", fail)
+    _non_empty_string(matched, "resource_scope", fail)
+
+
+def _require_authorization_context_match(
+    expected: Mapping[str, JsonValue],
+    current: Mapping[str, JsonValue],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    for name in ("agent_id", "action", "resource_scope"):
+        if current.get(name) != expected.get(name):
+            fail(f"authorization context changed at {name}")
+
+
+def _validate_authorization_event(
+    data: Mapping[str, JsonValue],
+    pending_calls: Mapping[str, ToolCall],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    _validate_authorization_context(data, fail)
+    boundary = _non_empty_string(data, "boundary", fail)
+    if boundary not in {"prepare", "dispatch"}:
+        fail("authorization boundary must be prepare or dispatch")
+    tool_call_id = _non_empty_string(data, "tool_call_id", fail)
+    tool_name = _non_empty_string(data, "tool_name", fail)
+    call = pending_calls.get(tool_call_id)
+    if call is None:
+        fail("authorization event must reference a pending tool/call")
+    if call.name != tool_name:
+        fail("authorization event tool_name must match its tool/call")
+    if "operation_id" in data:
+        _non_empty_string(data, "operation_id", fail)
+
+
 def _validate_compaction_identity(
     data: Mapping[str, JsonValue],
     fail: Callable[[str], NoReturn],
@@ -668,6 +758,12 @@ def _classify_operation(
         ReconcileStatus.FAILED,
     }:
         return OperationRecoveryClassification.COMPLETED
+    if (
+        state.aborted
+        and state.dispatch_attempts == 0
+        and state.error_code is ErrorCode.EACCES
+    ):
+        return OperationRecoveryClassification.COMPLETED
     if state.dispatch_attempts == 0:
         return OperationRecoveryClassification.SAFE_TO_RETRY
     if state.last_reconcile_status is ReconcileStatus.NOT_FOUND:
@@ -697,6 +793,7 @@ def _freeze_operations(
             last_reconcile_status=state.last_reconcile_status,
             output=copy.deepcopy(state.output),
             error_code=state.error_code,
+            authorization=copy.deepcopy(state.authorization),
         )
         for state in operations.values()
     )

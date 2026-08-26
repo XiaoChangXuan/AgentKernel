@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Iterable
 
+from .capabilities import CapabilityGrant
 from .session import Session
 
 
@@ -23,16 +25,42 @@ class AgentState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class AgentBudget:
-    """Hard per-turn limits enforced by the default loop."""
+    """Hard per-turn and optional process runtime limits."""
 
     max_steps_per_turn: int = 8
     max_tool_calls_per_turn: int = 16
+    max_token_usage: int | None = None
+    max_model_cost: float | None = None
+    max_total_tool_calls: int | None = None
+    max_resource_reads: int | None = None
+    max_resource_bytes: int | None = None
+    max_wall_time_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if self.max_steps_per_turn < 1:
-            raise ValueError("max_steps_per_turn must be at least 1")
-        if self.max_tool_calls_per_turn < 1:
-            raise ValueError("max_tool_calls_per_turn must be at least 1")
+        for name in ("max_steps_per_turn", "max_tool_calls_per_turn"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be at least 1")
+        for name in (
+            "max_token_usage",
+            "max_total_tool_calls",
+            "max_resource_reads",
+            "max_resource_bytes",
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer")
+        for name in ("max_model_cost", "max_wall_time_seconds"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative number")
 
 
 class CapabilityBoundError(ValueError):
@@ -75,6 +103,7 @@ class AgentControlBlock:
     capabilities: frozenset[str]
     capability_bounding_set: frozenset[str]
     budget: AgentBudget
+    capability_grants: tuple[CapabilityGrant, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
@@ -83,6 +112,7 @@ class AgentControlBlock:
             "capability_bounding_set",
             frozenset(self.capability_bounding_set),
         )
+        object.__setattr__(self, "capability_grants", tuple(self.capability_grants))
         if not self.agent_id or not self.session_id:
             raise ValueError("agent_id and session_id must not be empty")
         if not self.capabilities <= self.capability_bounding_set:
@@ -90,6 +120,13 @@ class AgentControlBlock:
             raise CapabilityBoundError(
                 f"effective capabilities exceed bounding set: {', '.join(excess)}"
             )
+        for grant in self.capability_grants:
+            if not isinstance(grant, CapabilityGrant):
+                raise TypeError("capability_grants must contain CapabilityGrant values")
+            if grant.subject != self.agent_id:
+                raise CapabilityBoundError(
+                    "capability grant subject must match agent_id"
+                )
 
     def has_capability(self, capability: str) -> bool:
         """Check one exact effective capability."""
@@ -125,6 +162,7 @@ class Agent:
         session: Session,
         capabilities: Iterable[str] = (),
         capability_bounding_set: Iterable[str] | None = None,
+        capability_grants: Iterable[CapabilityGrant] = (),
         budget: AgentBudget | None = None,
         parent_agent_id: str | None = None,
     ) -> "Agent":
@@ -144,6 +182,7 @@ class Agent:
             capabilities=effective,
             capability_bounding_set=bounding,
             budget=budget or AgentBudget(),
+            capability_grants=tuple(capability_grants),
         )
         control.transition(AgentState.READY)
         return cls(control=control, session=session)

@@ -1,0 +1,323 @@
+[
+  {
+    "benchmark": "resource_handle",
+    "case": "10MB_tool_result",
+    "metrics": {
+      "context_bytes": 10485868,
+      "estimated_tokens": 2621467,
+      "read_latency_ms": 0.0,
+      "resource_bytes": 0,
+      "restart_recovery": false,
+      "success": true
+    },
+    "strategy": "full_tool_result"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "10MB_tool_result",
+    "metrics": {
+      "context_bytes": 12430,
+      "estimated_tokens": 3108,
+      "required_offsets": 3,
+      "resource_bytes": 0,
+      "retained_information_correct": false,
+      "retained_required_offsets": 2,
+      "success": false
+    },
+    "strategy": "v0_4_pruning"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "10MB_tool_result",
+    "metrics": {
+      "context_bytes": 12806,
+      "estimated_tokens": 3202,
+      "read_latency_ms": 10.989,
+      "resource_bytes": 10485760,
+      "resource_bytes_read": 129,
+      "resource_reads": 3,
+      "restart_recovery": true,
+      "store_bytes": 10486293,
+      "success": true
+    },
+    "strategy": "artifact_handle"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "100MB_tool_result",
+    "metrics": {
+      "context_bytes": 104857708,
+      "estimated_tokens": 26214427,
+      "read_latency_ms": 0.0,
+      "resource_bytes": 0,
+      "restart_recovery": false,
+      "success": true
+    },
+    "strategy": "full_tool_result"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "100MB_tool_result",
+    "metrics": {
+      "context_bytes": 12431,
+      "estimated_tokens": 3108,
+      "required_offsets": 3,
+      "resource_bytes": 0,
+      "retained_information_correct": false,
+      "retained_required_offsets": 2,
+      "success": false
+    },
+    "strategy": "v0_4_pruning"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "100MB_tool_result",
+    "metrics": {
+      "context_bytes": 12809,
+      "estimated_tokens": 3203,
+      "read_latency_ms": 11.199,
+      "resource_bytes": 104857600,
+      "resource_bytes_read": 129,
+      "resource_reads": 3,
+      "restart_recovery": true,
+      "store_bytes": 104858135,
+      "success": true
+    },
+    "strategy": "artifact_handle"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "500MB_tool_result",
+    "metrics": {
+      "context_bytes": 524288108,
+      "estimated_tokens": 131072027,
+      "read_latency_ms": 0.0,
+      "resource_bytes": 0,
+      "restart_recovery": false,
+      "success": true
+    },
+    "strategy": "full_tool_result"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "500MB_tool_result",
+    "metrics": {
+      "context_bytes": 12431,
+      "estimated_tokens": 3108,
+      "required_offsets": 3,
+      "resource_bytes": 0,
+      "retained_information_correct": false,
+      "retained_required_offsets": 2,
+      "success": false
+    },
+    "strategy": "v0_4_pruning"
+  },
+  {
+    "benchmark": "resource_handle",
+    "case": "500MB_tool_result",
+    "metrics": {
+      "context_bytes": 12809,
+      "estimated_tokens": 3203,
+      "read_latency_ms": 11.99,
+      "resource_bytes": 524288000,
+      "resource_bytes_read": 129,
+      "resource_reads": 3,
+      "restart_recovery": true,
+      "store_bytes": 524288534,
+      "success": true
+    },
+    "strategy": "artifact_handle"
+  },
+  {
+    "benchmark": "durable_tool",
+    "case": "payment_success_then_crash",
+    "metrics": {
+      "duplicate_execution": true,
+      "latency_ms": 0.022,
+      "operation_count": 2,
+      "recovery_result": "retried_with_new_request_id",
+      "success": false
+    },
+    "strategy": "ordinary_tool"
+  },
+  {
+    "benchmark": "durable_tool",
+    "case": "payment_success_then_crash",
+    "metrics": {
+      "duplicate_execution": false,
+      "final_session_status": "completed",
+      "latency_ms": 11.551,
+      "operation_count": 1,
+      "pre_recovery_classification": "reconcile_required",
+      "recovery_result": "succeeded",
+      "success": true
+    },
+    "strategy": "agentkernel_wal"
+  },
+  {
+    "benchmark": "recovery",
+    "case": "after_user_message",
+    "metrics": {
+      "active_step": null,
+      "active_turn": 1,
+      "duplicate_action": false,
+      "durable_operation_classification": null,
+      "last_event_seq": 2,
+      "last_event_type": "user/message",
+      "lost_events": 0,
+      "pending_tool_calls": 0,
+      "recovery_status": "interrupted",
+      "replay_time_ms": 1.015,
+      "success": true
+    },
+    "strategy": "agentkernel_replay"
+  },
+  {
+    "benchmark": "recovery",
+    "case": "after_step_start",
+    "metrics": {
+      "active_step": 1,
+      "active_turn": 1,
+      "duplicate_action": false,
+      "durable_operation_classification": null,
+      "last_event_seq": 3,
+      "last_event_type": "step/start",
+      "lost_events": 0,
+      "pending_tool_calls": 0,
+      "recovery_status": "interrupted",
+      "replay_time_ms": 0.855,
+      "success": true
+    },
+    "strategy": "agentkernel_replay"
+  },
+  {
+    "benchmark": "recovery",
+    "case": "after_tool_call",
+    "metrics": {
+      "active_step": 1,
+      "active_turn": 1,
+      "duplicate_action": false,
+      "durable_operation_classification": null,
+      "last_event_seq": 5,
+      "last_event_type": "tool/call",
+      "lost_events": 0,
+      "pending_tool_calls": 1,
+      "recovery_status": "interrupted",
+      "replay_time_ms": 1.762,
+      "success": true
+    },
+    "strategy": "agentkernel_replay"
+  },
+  {
+    "benchmark": "recovery",
+    "case": "after_tool_dispatch",
+    "metrics": {
+      "active_step": 1,
+      "active_turn": 1,
+      "duplicate_action": false,
+      "durable_operation_classification": "reconcile_required",
+      "last_event_seq": 7,
+      "last_event_type": "tool/dispatch",
+      "lost_events": 0,
+      "pending_tool_calls": 1,
+      "recovery_status": "interrupted",
+      "replay_time_ms": 2.109,
+      "success": true
+    },
+    "strategy": "agentkernel_replay"
+  },
+  {
+    "benchmark": "recovery",
+    "case": "before_commit",
+    "metrics": {
+      "active_step": 1,
+      "active_turn": 1,
+      "duplicate_action": false,
+      "durable_operation_classification": "reconcile_required",
+      "last_event_seq": 7,
+      "last_event_type": "tool/dispatch",
+      "lost_events": 0,
+      "pending_tool_calls": 1,
+      "recovery_status": "interrupted",
+      "replay_time_ms": 1.396,
+      "success": true
+    },
+    "strategy": "agentkernel_replay"
+  },
+  {
+    "benchmark": "recovery",
+    "case": "after_result",
+    "metrics": {
+      "active_step": 1,
+      "active_turn": 1,
+      "duplicate_action": false,
+      "durable_operation_classification": "completed",
+      "last_event_seq": 9,
+      "last_event_type": "tool/result",
+      "lost_events": 0,
+      "pending_tool_calls": 0,
+      "recovery_status": "interrupted",
+      "replay_time_ms": 1.818,
+      "success": true
+    },
+    "strategy": "agentkernel_replay"
+  },
+  {
+    "benchmark": "context_vm",
+    "case": "1000_turn_agent",
+    "metrics": {
+      "compaction_cost": 0,
+      "context_tokens": 298891,
+      "final_correctness": true,
+      "latency_ms": 6.688,
+      "reclaim_tokens": 0,
+      "recovery_ability": true,
+      "success": true
+    },
+    "strategy": "full_history"
+  },
+  {
+    "benchmark": "context_vm",
+    "case": "1000_turn_agent",
+    "metrics": {
+      "compaction_cost": 0,
+      "context_tokens": 618,
+      "final_correctness": false,
+      "latency_ms": 9.336,
+      "reclaim_tokens": 298273,
+      "recovery_ability": false,
+      "success": false
+    },
+    "strategy": "simple_summary"
+  },
+  {
+    "benchmark": "context_vm",
+    "case": "1000_turn_agent",
+    "metrics": {
+      "compaction_cost": 0,
+      "context_tokens": 661,
+      "final_correctness": true,
+      "latency_ms": 9.802,
+      "reclaim_tokens": 298230,
+      "recovery_ability": false,
+      "success": true
+    },
+    "strategy": "replacement_history"
+  },
+  {
+    "benchmark": "context_vm",
+    "case": "1000_turn_agent",
+    "metrics": {
+      "compaction_cost": 284925,
+      "compaction_count": 1,
+      "context_tokens": 2091,
+      "final_correctness": true,
+      "latency_ms": 517.652,
+      "pruned_pages": 0,
+      "reclaim_tokens": 284791,
+      "recovery_ability": true,
+      "success": true
+    },
+    "strategy": "agentkernel_context_vm"
+  }
+]

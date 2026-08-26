@@ -1,73 +1,64 @@
-# Context VM real-provider benchmark result
+# AgentKernel Benchmark Results
 
-Run date: 2026-08-25
+This file is a compatibility and navigation entrypoint. It is not the canonical
+V0.7 release evidence report.
 
-Provider model: `azure/gpt-5.4-2026-03-05`
+Canonical aggregate result:
 
-Command: `AGENTKERNEL_RUN_REAL_BENCHMARK=1 python -m benchmarks.context_real_provider_benchmark`
+```text
+benchmarks/results/runtimebench_v0.7.json
+```
 
-No endpoint or credential is recorded here.
+Human-readable evidence review:
 
-## Resource efficiency
+```text
+docs/V0.7_RUNTIMEBENCH_REVIEW.md
+```
 
-Actual Provider usage is shown in tokens. Phase 2/3 makes two calls on the first
-compaction turn: one summary call and one final quality call. `Total input` includes
-both so the first-compaction cost is not hidden.
+Canonical command:
 
-| Case | Mode | Final input | Summary input | Total input | Calls | Seconds |
-|---|---|---:|---:|---:|---:|---:|
-| Early constraint | Full | 13,665 | 0 | 13,665 | 1 | 4.54 |
-| Early constraint | Phase 1 | 5,602 | 0 | 5,602 | 1 | 3.43 |
-| Early constraint | Phase 2/3 | 2,992 | 3,311 | 6,303 | 2 | 11.35 |
-| Middle decision | Full | 13,670 | 0 | 13,670 | 1 | 3.95 |
-| Middle decision | Phase 1 | 5,607 | 0 | 5,607 | 1 | 3.62 |
-| Middle decision | Phase 2/3 | 2,993 | 3,318 | 6,311 | 2 | 10.02 |
-| Large Tool tail | Full | 13,668 | 0 | 13,668 | 1 | 4.40 |
-| Large Tool tail | Phase 1 | 5,605 | 0 | 5,605 | 1 | 5.34 |
-| Large Tool tail | Phase 2/3 | 2,949 | 3,314 | 6,263 | 2 | 8.40 |
+```bash
+python -m benchmarks.runtimebench
+```
 
-Mean actual usage:
+## Current V0.7 RuntimeBench Summary
 
-| Mode | Final input | First-turn total input | Calls | Mean seconds |
-|---|---:|---:|---:|---:|
-| Full | 13,668 | 13,668 | 1 | 4.30 |
-| Phase 1 | 5,605 | 5,605 | 1 | 4.13 |
-| Phase 2/3 | 2,978 | 6,292 | 2 | 9.92 |
+| Family | Result |
+| --- | --- |
+| B1 Fault Tolerance | PASS |
+| B2 Side Effect Safety | PASS |
+| B3 Context + Truth Preservation | PASS |
+| B4 Capability Isolation | PASS |
+| B5 Resource Governance | PASS |
+| B6 Long-Horizon Runtime Stability | PASS |
+| B7 Boundary Isolation | PASS |
 
-- Phase 2/3 first-compaction total input is 54.0% below Full.
-- Its post-compaction final request is 78.2% below Full and 46.9% below Phase 1.
-- The summary call makes the first Phase 2/3 turn 12.3% more input-expensive than
-  Phase 1, but that checkpoint is durable and can be reused on later turns.
-- No Provider overflow occurred in these nine quality requests. Overflow recovery is
-  covered by deterministic offline tests, including the exactly-one-retry guard.
+```text
+total = 7
+passed = 7
+failed = 0
+decision = PASS
+```
 
-## Task quality
+B6 covers deterministic single-agent long-horizon profiles at 100, 500, and
+1000 logical steps. The generated aggregate result reports 9684 session events,
+0 duplicate external effects, 0 unauthorized effects, and 3 budget
+block/recovery cycles.
 
-| Case | Full | Phase 1 | Phase 2/3 |
-|---|---:|---:|---:|
-| Early constraint retained | pass | pass | pass |
-| Middle decision retained | pass | pass | pass |
-| Large Tool Result tail error identified | pass | fail | pass |
+## Leaf / Historical / Diagnostic Results
 
-Full and Phase 2/3 both passed 3/3 cases. Phase 1 passed 2/3 and failed to identify
-the `FATAL: permission denied` evidence after eviction. Phase 2/3 retained that fact
-through deterministic Tool Result pruning and semantic compaction.
+The files below are retained as leaf benchmark outputs and historical release
+evidence. They remain useful for debugging individual mechanisms, but they are
+not the top-level V0.7 release claim surface:
 
-## Accounting observations
+- `benchmarks/results/resource.json`
+- `benchmarks/results/durable_tool.json`
+- `benchmarks/results/recovery.json`
+- `benchmarks/results/context_vm.json`
+- `benchmarks/results/capability_runtime.json`
+- `benchmarks/results/v0.7_runtime.json`
+- `benchmarks/results/all.json`
 
-The deterministic request estimator is intentionally not treated as exact Provider
-billing:
-
-- It overestimated the Full requests (about 16.9K estimated vs 13.7K actual).
-- It underestimated Phase 1 (about 4.83K estimated vs 5.60K actual).
-- It was closer for the Phase 2/3 final request (about 2.82K estimated vs 2.98K actual).
-
-This variance confirms why normalized Provider overflow recovery remains necessary
-even with complete-request fallback accounting.
-
-## Release interpretation
-
-The benchmark supports closing V0.4: Context VM materially reduced real Provider
-input while matching Full History on all three scoped quality checks. This is not a
-general coding-agent success-rate claim. The fixture is small, uses one model, and
-does not measure long-horizon SWE-bench performance or production cost variance.
+Earlier real-provider Context VM observations are retained in git history. Real
+provider runs require explicit local configuration and are not part of default
+pytest or RuntimeBench release evidence.

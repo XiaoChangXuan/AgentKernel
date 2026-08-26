@@ -142,9 +142,11 @@ def test_default_loop_uses_durable_protocol_without_model_metadata() -> None:
     assert asyncio.run(loop.run(agent, "Create an order.")) == "Created."
     assert service.actual_execution_count == 1
     event_types = [event.type for event in session.events]
-    assert event_types[4:10] == [
+    assert event_types[4:12] == [
         EventType.TOOL_CALL,
+        EventType.AUTHORIZATION_GRANTED,
         EventType.TOOL_PREPARE,
+        EventType.AUTHORIZATION_GRANTED,
         EventType.TOOL_DISPATCH,
         EventType.TOOL_COMMIT,
         EventType.TOOL_RESULT,

@@ -1,0 +1,28 @@
+[
+  {
+    "benchmark": "durable_tool",
+    "case": "payment_success_then_crash",
+    "metrics": {
+      "duplicate_execution": true,
+      "latency_ms": 0.022,
+      "operation_count": 2,
+      "recovery_result": "retried_with_new_request_id",
+      "success": false
+    },
+    "strategy": "ordinary_tool"
+  },
+  {
+    "benchmark": "durable_tool",
+    "case": "payment_success_then_crash",
+    "metrics": {
+      "duplicate_execution": false,
+      "final_session_status": "completed",
+      "latency_ms": 11.551,
+      "operation_count": 1,
+      "pre_recovery_classification": "reconcile_required",
+      "recovery_result": "succeeded",
+      "success": true
+    },
+    "strategy": "agentkernel_wal"
+  }
+]

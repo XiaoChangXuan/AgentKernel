@@ -1,6 +1,6 @@
-# AgentKernel V0.4 phase 3 agent guide
+# AgentKernel V0.5 agent guide
 
-Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.4 phase 3 behavior; code and tests are the final authority when prose drifts.
+Read this file and `docs/IMPLEMENTATION_BLUEPRINT.md` before changing code. `docs/ARCHITECTURE.md` describes implemented V0.5 behavior; code and tests are the final authority when prose drifts.
 
 ## Goal
 
@@ -16,6 +16,7 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 - `agentkernel/context/`: Context Pages, projection, policy, pressure, pruning, durable compaction, forced reclaim, working-set selection, and protocol validation.
 - `agentkernel/tool_effects.py`: host-only Tool effect and reconciliation values.
 - `agentkernel/durable_tools.py`: mutation authorization, operation identity, WAL boundaries, dispatch, retry, and reconciliation mechanisms.
+- `agentkernel/resources/`: V0.5 Artifact identity, store/service separation, owner/range enforcement, externalization policy, metrics, and read/stat tools.
 - `agentkernel/agent.py`: Agent, AgentControlBlock, state transitions, capabilities, bounding set, budgets.
 - `agentkernel/tools.py`: runtime tool definitions, model schema projection, capability enforcement, and handler invocation.
 - `agentkernel/prompt.py`, `agentkernel/llm.py`, `agentkernel/hooks.py`: replaceable seams used by the loop.
@@ -33,6 +34,21 @@ AgentKernel is a small trusted runtime spine for tool-using agents. The LLM prop
 5. Kernel implements mechanisms; deployments choose policy.
 6. Effective capabilities remain a subset of the AgentControlBlock bounding set.
 7. `DefaultAgentLoop` contains orchestration only, never business-agent branches.
+8. ResourceId and HandleId are Kernel-owned and remain distinct from tool_call_id, operation_id, and host paths.
+9. ResourceHandle is a model projection; ResourceMetadata and ResourceStore paths remain host-only.
+10. A Resource handle may be emitted only after its bytes and metadata are durably published.
+
+## Resource rules
+
+- The only V0.5 model URI is `artifact://<resource_id>`; do not expose LocalResourceStore paths.
+- Every model read/stat crosses ResourceService and validates exact agent/session ownership plus hard range limits.
+- Externalized raw bytes live in ResourceStore, not Session or Context Pages. Session records preview+handle.
+- Tool Result externalization policy belongs in the ToolResultProcessor seam, never as a threshold branch in DefaultAgentLoop.
+- ResourceStore owns durable bytes only; ResourceService owns identity, authorization, validation, and metrics.
+- V0.4 Context pruning may further reduce a preview but must never load, rewrite, or delete its resource.
+- Crash before store publication yields no handle. A store-committed resource without a Session reference is retained and identifiable; V0.5 has no automatic GC.
+- Keep `resource_read` bounded and excluded from recursive result externalization by default.
+- Do not add directory/mount/rename/delete/search/glob semantics, remote drivers, media parsers, or a general VFS in V0.5.
 
 ## Context VM rules
 
@@ -81,6 +97,8 @@ python examples/persistent_session.py
 python -m examples.context_reclamation_benchmark
 python -m benchmarks.context_real_provider_benchmark
 python -m benchmarks.coding_fixture_runner
+python examples/resource_handles.py
+python -m benchmarks.resource_handle_benchmark --sizes-mb 10,100
 python examples/real_llm_agent.py  # requires explicit AGENTKERNEL_LLM_* environment
 python -m pytest
 python -m compileall -q agentkernel examples tests
@@ -88,13 +106,13 @@ python -m compileall -q agentkernel examples tests
 
 Run focused tests after changing a module, then the full suite before handoff.
 
-## Prohibited in V0.4 phase 3
+## Prohibited in V0.5
 
 - Provider wire or SDK types outside `agentkernel/providers/`.
 - Direct business actions in `loop.py`.
 - A second mutable chat-history store beside Session events.
 - Capability mutation by model or tool code.
-- SQLite, distributed transactions, 2PC, distributed locks, Saga framework, full DeepSeek Surface cloning, VFS/artifact handles, scheduler, multi-agent, subagent, IPC, complex plugin runtime, UI, Gateway, MCP, RAG, embeddings, vector storage, long-term memory, or prompt-injection classification.
+- SQLite, distributed transactions, 2PC, distributed locks, Saga framework, full DeepSeek Surface cloning, full VFS semantics, resource deletion/GC/search, remote resource drivers, scheduler, multi-agent, subagent, IPC, complex plugin runtime, UI, Gateway, MCP, RAG, embeddings, vector storage, long-term memory, or prompt-injection classification.
 - Large copied sections from reference repositories.
 
 ## Persistence and recovery constraints
@@ -115,4 +133,4 @@ Run focused tests after changing a module, then the full suite before handoff.
 
 ## Stage
 
-Current: V0.4 Context VM phase 3 on top of phase 2 reclamation, the phase 1 working set, and V0.3 Durable Tool Execution. Implemented mechanisms include complete-request fallback accounting, adapter-supplied accounting/limits, normalized Provider failures, forced reclaim to a policy-owned safety target, and exactly one overflow retry. Exact Provider tokenizers remain optional. VFS, long-term memory, RAG, and SQLite remain future decisions.
+Current: V0.5 Virtual Resource / Artifact Handle on top of V0.4 Context VM and V0.3 Durable Tool Execution. Implemented mechanisms include a replaceable ResourceStore, durable LocalResourceStore, Kernel-owned opaque handles, owner-checked bounded reads, restart resolution, large Tool Result externalization before Session commit, and Resource metrics. Full VFS, automatic GC, remote stores, search, richer media parsing, long-term memory, RAG, and SQLite remain future decisions.

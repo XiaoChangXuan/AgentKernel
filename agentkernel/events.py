@@ -24,6 +24,8 @@ class EventType(StrEnum):
     TOOL_COMMIT = "tool/commit"
     TOOL_ABORT = "tool/abort"
     TOOL_RECONCILE = "tool/reconcile"
+    AUTHORIZATION_GRANTED = "authorization/granted"
+    AUTHORIZATION_DENIED = "authorization/denied"
     TOOL_RESULT = "tool/result"
     CONTEXT_COMPACTION_REQUESTED = "context/compaction-requested"
     CONTEXT_COMPACTION_STARTED = "context/compaction-started"
