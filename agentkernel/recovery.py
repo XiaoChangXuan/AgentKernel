@@ -136,6 +136,8 @@ def analyze_recovery(
     active_compaction_id: str | None = None
     created_summaries: dict[str, dict[str, JsonValue]] = {}
     completed_compaction_ids: list[str] = []
+    agent_creation_facts: dict[str, dict[str, JsonValue]] = {}
+    agent_creation_by_agent: dict[str, str] = {}
 
     def fail(message: str) -> NoReturn:
         analysis = RecoveryAnalysis(
@@ -505,6 +507,15 @@ def analyze_recovery(
             active_compaction_id = None
             continue
 
+        if event.type is EventType.AGENT_CREATED:
+            _validate_agent_created_event(
+                data,
+                agent_creation_facts,
+                agent_creation_by_agent,
+                fail,
+            )
+            continue
+
         if event.type is EventType.STEP_END:
             _require_step(data, active_turn, active_step, fail)
             if pending_calls:
@@ -715,6 +726,44 @@ def _require_compaction_identity_match(
     ):
         if current.get(name) != requested.get(name):
             fail(f"context compaction identity changed at {name}")
+
+
+def _validate_agent_created_event(
+    data: Mapping[str, JsonValue],
+    agent_creation_facts: dict[str, dict[str, JsonValue]],
+    agent_creation_by_agent: dict[str, str],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    expected = {"agent_id", "parent_agent_id", "session_id", "creation_id"}
+    if set(data) != expected:
+        fail(
+            "agent/created must contain exactly agent_id, parent_agent_id, "
+            "session_id, creation_id"
+        )
+    creation_id = _non_empty_string(data, "creation_id", fail)
+    agent_id = _non_empty_string(data, "agent_id", fail)
+    _non_empty_string(data, "session_id", fail)
+    parent_agent_id = data.get("parent_agent_id")
+    if parent_agent_id is not None and (
+        not isinstance(parent_agent_id, str) or not parent_agent_id
+    ):
+        fail("agent/created parent_agent_id must be null or a non-empty string")
+    if parent_agent_id == agent_id:
+        fail("agent/created cannot make an agent its own parent")
+    snapshot = copy.deepcopy(dict(data))
+    existing_by_creation = agent_creation_facts.get(creation_id)
+    if existing_by_creation is not None:
+        if existing_by_creation != snapshot:
+            fail(f"conflicting agent/created creation_id: {creation_id}")
+        return
+    existing_creation = agent_creation_by_agent.get(agent_id)
+    if existing_creation is not None:
+        fail(
+            f"agent {agent_id!r} has multiple creation facts: "
+            f"{existing_creation}, {creation_id}"
+        )
+    agent_creation_facts[creation_id] = snapshot
+    agent_creation_by_agent[agent_id] = creation_id
 
 
 def _non_empty_string(

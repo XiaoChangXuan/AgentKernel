@@ -61,6 +61,7 @@ necessarily current authoritative specifications.
 - [V0.7 Process Core Implementation](implementation/V0.7_PROCESS_CORE_IMPLEMENTATION.md)
 - [V0.7 Scheduler Implementation](implementation/V0.7_SCHEDULER_IMPLEMENTATION.md)
 - [V0.7 Resource Accounting](implementation/V0.7_RESOURCE_ACCOUNTING.md)
+- [V0.8 Agent Registry Implementation](implementation/V0.8_AGENT_REGISTRY_IMPLEMENTATION.md)
 
 ## Releases
 
