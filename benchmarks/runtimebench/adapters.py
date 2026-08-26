@@ -40,8 +40,13 @@ from benchmarks.runtimebench.fixtures import (
     capability_attack_fixture,
     context_truth_fixture,
     crash_fixture,
+    long_horizon_fixture,
     resource_governance_fixture,
     side_effect_fixture,
+)
+from benchmarks.runtimebench.long_horizon import (
+    LONG_HORIZON_PROFILES,
+    run_long_horizon_profiles,
 )
 from benchmarks.runtimebench.schema import (
     BaselineSpec,
@@ -62,6 +67,7 @@ def run_v0_7_families() -> list[RuntimeBenchRecord]:
         context_truth_record(),
         capability_isolation_record(),
         resource_governance_record(),
+        long_horizon_runtime_stability_record(),
         boundary_isolation_record(),
     ]
 
@@ -470,6 +476,177 @@ def resource_governance_record() -> RuntimeBenchRecord:
             "synthetic deterministic resource pressure",
             "accounting is runtime observation, not durable billing truth",
             "does not implement preemptive scheduling or V0.8 process trees",
+        ),
+        raw_records=_raw_dicts(records),
+    )
+
+
+def long_horizon_runtime_stability_record(
+    profiles: Iterable[int] = LONG_HORIZON_PROFILES,
+) -> RuntimeBenchRecord:
+    records = run_long_horizon_profiles(profiles)
+    all_profiles_passed = all(_success(record) for record in records)
+    step_counts = [int(_metric(record, "profile_steps", 0)) for record in records]
+    steps_completed = [int(_metric(record, "steps_completed", 0)) for record in records]
+    durable_truth_lost = sum(
+        0 if bool(_metric(record, "truth_preserved", False)) else 1
+        for record in records
+    )
+    duplicate_external_effects = sum(
+        int(_metric(record, "duplicate_external_effects", 0)) for record in records
+    )
+    unauthorized_effect_count = sum(
+        int(_metric(record, "unauthorized_effect_count", 0)) for record in records
+    )
+    resource_restart_success = all(
+        bool(_metric(record, "resource_restart_success", False))
+        for record in records
+    )
+    budget_blocks = sum(int(_metric(record, "budget_blocks", 0)) for record in records)
+    budget_recoveries = sum(
+        int(_metric(record, "budget_recoveries", 0)) for record in records
+    )
+    recovery_failure_count = sum(
+        int(_metric(record, "recovery_failure_count", 0)) for record in records
+    )
+    recovery_mappings_legal = all(
+        int(_metric(record, "reconcile_required_count", 0)) == 1
+        and int(_metric(record, "recovery_failure_count", 0)) == 0
+        for record in records
+    )
+    final_durable_consistency = all(
+        bool(_metric(record, "final_durable_consistency", False))
+        for record in records
+    )
+    success = (
+        all_profiles_passed
+        and step_counts == steps_completed
+        and durable_truth_lost == 0
+        and duplicate_external_effects == 0
+        and unauthorized_effect_count == 0
+        and resource_restart_success
+        and budget_blocks == len(records)
+        and budget_recoveries == len(records)
+        and recovery_mappings_legal
+        and final_durable_consistency
+    )
+
+    return RuntimeBenchRecord(
+        benchmark_id="B6_long_horizon_runtime_stability",
+        category="runtime_composition",
+        description=(
+            "Long-horizon composition of Session replay, WAL recovery, Context VM, "
+            "Resource Handle restart reads, Capability denial, Scheduler budget "
+            "blocking, and Usage accounting."
+        ),
+        fixture=long_horizon_fixture(),
+        mechanism_under_test=(
+            "Session Event Log",
+            "Recovery replay",
+            "ProcessControlBlock.from_recovery",
+            "ContextManager.build_working_set",
+            "ResourceService with LocalResourceStore",
+            "DurableToolExecutor WAL and reconcile",
+            "CapabilityEvaluator denial",
+            "UsageCollector",
+            "CooperativeScheduler.safe_point",
+        ),
+        baseline=BaselineSpec(
+            name="naive_loop_with_truncation_and_retry",
+            type="conceptual_internal_baseline",
+            description=(
+                "A single in-memory loop that truncates context, stores large "
+                "outputs inline or out of band without kernel handles, retries "
+                "mutations directly, and only checks resource usage after work."
+            ),
+        ),
+        failure_injection=FailureInjectionSpec(
+            enabled=True,
+            point=(
+                "long_horizon_dispatch_crash_resource_restart_capability_denial_"
+                "budget_pressure"
+            ),
+            description=(
+                "Each profile injects a durable dispatch crash, reloads from JSONL, "
+                "reconciles, restarts resource reads, denies unauthorized actions, "
+                "and blocks/unblocks at a scheduler safe point."
+            ),
+        ),
+        metrics={
+            "profile_count": len(records),
+            "profile_steps": step_counts,
+            "steps_completed": steps_completed,
+            "session_events": sum(
+                int(_metric(record, "session_events", 0)) for record in records
+            ),
+            "recovered_events": sum(
+                int(_metric(record, "recovered_events", 0)) for record in records
+            ),
+            "durable_operations": sum(
+                int(_metric(record, "durable_operations", 0)) for record in records
+            ),
+            "reconcile_required_count": sum(
+                int(_metric(record, "reconcile_required_count", 0))
+                for record in records
+            ),
+            "duplicate_external_effects": duplicate_external_effects,
+            "context_working_set_tokens_peak": max(
+                (
+                    int(_metric(record, "context_working_set_tokens_peak", 0))
+                    for record in records
+                ),
+                default=0,
+            ),
+            "reclaim_tokens_saved": sum(
+                int(_metric(record, "reclaim_tokens_saved", 0)) for record in records
+            ),
+            "context_reclaim_count": sum(
+                int(_metric(record, "context_reclaim_count", 0)) for record in records
+            ),
+            "resource_count": sum(
+                int(_metric(record, "resource_count", 0)) for record in records
+            ),
+            "resource_bytes": sum(
+                int(_metric(record, "resource_bytes", 0)) for record in records
+            ),
+            "resource_restart_success": resource_restart_success,
+            "budget_blocks": budget_blocks,
+            "budget_recoveries": budget_recoveries,
+            "capability_denials": sum(
+                int(_metric(record, "capability_denials", 0)) for record in records
+            ),
+            "unauthorized_effect_count": unauthorized_effect_count,
+            "recovery_success_count": sum(
+                int(_metric(record, "recovery_success_count", 0))
+                for record in records
+            ),
+            "recovery_failure_count": recovery_failure_count,
+            "agent_process_session_isolation": all(
+                bool(_metric(record, "agent_process_session_isolation", False))
+                for record in records
+            ),
+            "truth_preserved": durable_truth_lost == 0,
+            "final_durable_consistency": final_durable_consistency,
+            "wall_time_ms": round(
+                sum(float(_metric(record, "wall_time_ms", 0.0)) for record in records),
+                3,
+            ),
+            "raw_record_count": len(records),
+        },
+        result=ResultSpec(
+            status=status_for(success),
+            oracle=(
+                "all_profiles_complete_without_truth_loss_duplicate_effects_"
+                "unauthorized_effects_or_budget_recovery_failure"
+            ),
+        ),
+        success=success,
+        limitations=(
+            "synthetic deterministic long-horizon fixture",
+            "single-agent V0.7 runtime only",
+            "does not implement or validate Process Tree, IPC, Multi-Agent, "
+            "Delegation, Namespace, or Memory",
+            "wall-clock measurements are local machine observations",
         ),
         raw_records=_raw_dicts(records),
     )

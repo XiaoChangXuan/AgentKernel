@@ -47,6 +47,8 @@ authoritative specifications.
   how the current RuntimeBench runner is implemented.
 - [V0.7_RUNTIMEBENCH_REVIEW.md](V0.7_RUNTIMEBENCH_REVIEW.md): current measured
   evidence and limitations.
+- [V0.7_LONG_HORIZON_RUNTIMEBENCH.md](V0.7_LONG_HORIZON_RUNTIMEBENCH.md): B6
+  long-horizon RuntimeBench evidence.
 - [V0.7_RUNTIME_BENCHMARK.md](V0.7_RUNTIME_BENCHMARK.md): earlier V0.7 runtime
   primitive benchmark report.
 - [benchmark/RESULTS.md](benchmark/RESULTS.md): historical benchmark report

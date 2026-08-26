@@ -2,6 +2,12 @@
 
 Status: design freeze for AgentKernel RuntimeBench V0.7.
 
+Post-freeze implementation note: current V0.7 release evidence implements B1
+through B7 and leaves B8 Scheduler Scalability unimplemented as a future
+micro/stress benchmark. The measured release evidence lives in
+`benchmarks/results/runtimebench_v0.7.json` and
+`docs/V0.7_RUNTIMEBENCH_REVIEW.md`.
+
 Decision:
 
 ```text
@@ -597,8 +603,10 @@ Metrics:
 Expected failure mode:
 
 An implementation may pass isolated tests but fail when mechanisms compose.
-B6 is the first family that should support a broad "runtime stability" claim.
-Until B6 exists, composition claims should stay scoped.
+B6 is the first family that should support a scoped "runtime stability" claim.
+In the current V0.7 release evidence, B6 exists for deterministic single-agent
+profiles at 100, 500, and 1000 logical steps. Composition claims should remain
+limited to those tested invariants.
 
 ### B7 Boundary Isolation
 

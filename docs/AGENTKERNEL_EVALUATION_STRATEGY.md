@@ -1,11 +1,11 @@
 # AgentKernel Evaluation Strategy
 
-Status: strategy review after V0.7 Process Runtime freeze.
+Status: strategy review updated after V0.7 RuntimeBench B6 evidence freeze.
 
 Decision:
 
 ```text
-READY_TO_BUILD_RUNTIMEBENCH
+V0.7_RUNTIMEBENCH_CORE_EVIDENCE_COMPLETE
 ```
 
 Scope:
@@ -46,7 +46,9 @@ claims:
 - authority checks can be enforced outside the LLM at Tool, Resource, and
   Durable Tool boundaries;
 - single-agent execution can be represented as a schedulable runtime Process
-  with cooperative safe points and observation-based budget blocking.
+  with cooperative safe points and observation-based budget blocking;
+- implemented V0.1-V0.7 runtime mechanisms preserve tested invariants across
+  deterministic single-agent long-horizon fixtures up to 1000 logical steps.
 
 The current implementation does not yet justify claims about complete
 multi-agent isolation, delegation, revocation, namespace security, persistent
@@ -139,7 +141,7 @@ Candidate claims after V0.7:
 | C. Large Resources do not need to live in prompt/context | IMPLEMENTED_WITH_SCOPE | AgentKernel can externalize large local artifact bytes behind opaque handles and bounded reads. It is not a full VFS, search layer, or GC system. |
 | D. Authority does not belong to the LLM | IMPLEMENTED_WITH_SCOPE | AgentKernel enforces current Tool, Resource, and Durable Tool authorization outside model output. It does not yet implement delegation, revocation, namespace, RBAC, or IAM. |
 | E. Agent Execution is governable as a runtime process | PARTIALLY_IMPLEMENTED | AgentKernel has single-agent cooperative Process/Scheduler/Accounting primitives. It does not yet have Process Tree, IPC, preemption, or multi-agent isolation. |
-| F. Kernel mechanisms compose without destroying previous invariants | PARTIALLY_IMPLEMENTED | V0.7 evidence shows current mechanisms compose in targeted tests. Broader long-horizon RuntimeBench is still needed. |
+| F. Kernel mechanisms compose without destroying previous invariants | IMPLEMENTED_WITH_SCOPE | AgentKernel V0.1-V0.7 mechanisms preserved the tested runtime invariants across deterministic single-agent long-horizon fixtures up to 1000 logical steps. |
 
 These claims should be stated as runtime mechanism claims, not product-quality
 or model-quality claims.
@@ -153,7 +155,7 @@ or model-quality claims.
 | Large Resources do not need to live in prompt/context | `ResourceStore`, `ResourceService`, `ResourceHandle`, `artifact://`, bounded `resource_read`. | Resource benchmark: full context grew from 10.5 MB to 524.3 MB; Artifact Handle context stayed about 12.8 KB while preserving 10 MiB, 100 MiB, and 500 MiB resources and restart reads. | IMPLEMENTED_WITH_SCOPE | Do not claim general filesystem, semantic retrieval, garbage collection, remote object storage, or RAG. |
 | Authority does not belong to the LLM | `CapabilityGrant`, `CapabilityEvaluator`, `ToolRegistry`, `ResourceService`, Durable Tool authorization audit. | `benchmarks/results/capability_runtime.json`: unauthorized tool/resource/payment dispatch denied; hidden tool was not model-visible; legacy `required_capability` still works. | IMPLEMENTED_WITH_SCOPE | Do not claim delegation, revocation, namespace normalization, RBAC, IAM, or complete sandboxing. |
 | Agent Execution is governable as a runtime process | `ProcessControlBlock`, `ProcessManager`, `CooperativeScheduler`, safe points, `UsageCollector`, budget checks. | `benchmarks/results/v0.7_runtime.json`: lifecycle, WAITING/BLOCKED/READY, budget blocking, usage accounting, process recovery, and Agent/Process/Session boundary cases passed. | PARTIALLY_IMPLEMENTED | Do not claim preemption, multi-agent scheduling, process tree semantics, IPC, durable accounting ledger, or production fairness. |
-| Kernel mechanisms compose | Scheduler + WAL, Accounting + Capability, Context VM + Resource, Recovery + Process mapping. | V0.6 and V0.7 tests/benchmarks show targeted composition and backward compatibility. | PARTIALLY_IMPLEMENTED | Do not claim broad long-horizon stability until RuntimeBench combines crashes, resources, context pressure, durable mutations, and budgets in one workload. |
+| Kernel mechanisms compose | Scheduler + WAL, Accounting + Capability, Context VM + Resource, Recovery + Process mapping. | `benchmarks/results/runtimebench_v0.7.json`: B6 passes 100, 500, and 1000 step deterministic profiles with 9684 recovered events, 0 duplicate external effects, 0 unauthorized effects, and 3 budget block/recovery cycles. | IMPLEMENTED_WITH_SCOPE | Do not claim production reliability, semantic long-horizon reasoning, multi-agent stability, or scheduler scalability. |
 
 ## 7. RuntimeBench Design
 
@@ -614,7 +616,8 @@ Mitigation:
 - Report limitations per benchmark.
 - Use ablations in addition to external baselines.
 - Avoid ranking products when design centers differ.
-- Add long-horizon mixed workloads before making composition claims.
+- Extend beyond deterministic single-agent long-horizon workloads before making
+  production, semantic, multi-agent, or scalability claims.
 
 ## 17. Claims We Must Not Make Yet
 
@@ -652,7 +655,7 @@ fixtures.
 Decision:
 
 ```text
-READY_TO_BUILD_RUNTIMEBENCH
+V0.7_RUNTIMEBENCH_CORE_EVIDENCE_COMPLETE
 ```
 
 Rationale:
@@ -661,8 +664,9 @@ Rationale:
   not general Agent Framework.
 - V0.1-V0.7 already provide implemented mechanisms and real offline evidence
   for several runtime claims.
-- Current evidence is strong enough to design RuntimeBench, but not broad enough
-  to make production or cross-product superiority claims.
+- Current evidence is strong enough to support scoped V0.7 single-agent
+  RuntimeBench claims, but not production, semantic long-horizon reasoning,
+  multi-agent, scalability, or cross-product superiority claims.
 - RuntimeBench should be versioned by runtime property families B1 through B8,
   with V0.7 proving single-agent invariants, V0.8 adding multi-agent isolation,
   V0.9 adding persistent memory correctness, and V1.0 combining them into a
@@ -671,6 +675,5 @@ Rationale:
 Immediate next step:
 
 ```text
-Build RuntimeBench v0.2 design and runner plan without entering V0.8
-implementation.
+Complete V0.7 release freeze without entering V0.8 implementation.
 ```

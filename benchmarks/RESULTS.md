@@ -30,14 +30,20 @@ python -m benchmarks.runtimebench
 | B3 Context + Truth Preservation | PASS |
 | B4 Capability Isolation | PASS |
 | B5 Resource Governance | PASS |
+| B6 Long-Horizon Runtime Stability | PASS |
 | B7 Boundary Isolation | PASS |
 
 ```text
-total = 6
-passed = 6
+total = 7
+passed = 7
 failed = 0
 decision = PASS
 ```
+
+B6 covers deterministic single-agent long-horizon profiles at 100, 500, and
+1000 logical steps. The generated aggregate result reports 9684 session events,
+0 duplicate external effects, 0 unauthorized effects, and 3 budget
+block/recovery cycles.
 
 ## Leaf / Historical / Diagnostic Results
 

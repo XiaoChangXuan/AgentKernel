@@ -46,10 +46,10 @@
         "crash_case_count": 6,
         "duplicate_effect_count": 0,
         "lost_durable_fact_count": 0,
-        "max_replay_time_ms": 2.057,
+        "max_replay_time_ms": 2.484,
         "process_recovery_mapping_success": true,
         "raw_record_count": 7,
-        "recovery_latency_ms": 1.629,
+        "recovery_latency_ms": 1.671,
         "recovery_success_rate": 1.0
       },
       "raw_records": [
@@ -66,7 +66,7 @@
             "lost_events": 0,
             "pending_tool_calls": 0,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.219,
+            "replay_time_ms": 1.418,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -84,7 +84,7 @@
             "lost_events": 0,
             "pending_tool_calls": 0,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.358,
+            "replay_time_ms": 2.484,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -102,7 +102,7 @@
             "lost_events": 0,
             "pending_tool_calls": 1,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.526,
+            "replay_time_ms": 1.69,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -120,7 +120,7 @@
             "lost_events": 0,
             "pending_tool_calls": 1,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.751,
+            "replay_time_ms": 1.603,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -138,7 +138,7 @@
             "lost_events": 0,
             "pending_tool_calls": 1,
             "recovery_status": "interrupted",
-            "replay_time_ms": 2.057,
+            "replay_time_ms": 1.48,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -156,7 +156,7 @@
             "lost_events": 0,
             "pending_tool_calls": 0,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.863,
+            "replay_time_ms": 1.351,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -229,7 +229,7 @@
         "ordinary_operation_count": 2,
         "raw_record_count": 2,
         "reconciliation_success_rate": 1.0,
-        "recovery_latency_ms": 12.791
+        "recovery_latency_ms": 10.5
       },
       "raw_records": [
         {
@@ -237,7 +237,7 @@
           "case": "payment_success_then_crash",
           "metrics": {
             "duplicate_execution": true,
-            "latency_ms": 0.011,
+            "latency_ms": 0.009,
             "operation_count": 2,
             "recovery_result": "retried_with_new_request_id",
             "success": false
@@ -250,7 +250,7 @@
           "metrics": {
             "duplicate_execution": false,
             "final_session_status": "completed",
-            "latency_ms": 12.791,
+            "latency_ms": 10.5,
             "operation_count": 1,
             "pre_recovery_classification": "reconcile_required",
             "recovery_result": "succeeded",
@@ -361,7 +361,7 @@
           "metrics": {
             "context_bytes": 12806,
             "estimated_tokens": 3202,
-            "read_latency_ms": 12.298,
+            "read_latency_ms": 12.508,
             "resource_bytes": 10485760,
             "resource_bytes_read": 129,
             "resource_reads": 3,
@@ -404,7 +404,7 @@
           "metrics": {
             "context_bytes": 12809,
             "estimated_tokens": 3203,
-            "read_latency_ms": 12.999,
+            "read_latency_ms": 12.361,
             "resource_bytes": 104857600,
             "resource_bytes_read": 129,
             "resource_reads": 3,
@@ -447,7 +447,7 @@
           "metrics": {
             "context_bytes": 12809,
             "estimated_tokens": 3203,
-            "read_latency_ms": 12.0,
+            "read_latency_ms": 13.079,
             "resource_bytes": 524288000,
             "resource_bytes_read": 129,
             "resource_reads": 3,
@@ -464,7 +464,7 @@
             "compaction_cost": 0,
             "context_tokens": 298891,
             "final_correctness": true,
-            "latency_ms": 7.667,
+            "latency_ms": 6.577,
             "reclaim_tokens": 0,
             "recovery_ability": true,
             "success": true
@@ -478,7 +478,7 @@
             "compaction_cost": 0,
             "context_tokens": 618,
             "final_correctness": false,
-            "latency_ms": 11.284,
+            "latency_ms": 12.552,
             "reclaim_tokens": 298273,
             "recovery_ability": false,
             "success": false
@@ -492,7 +492,7 @@
             "compaction_cost": 0,
             "context_tokens": 661,
             "final_correctness": true,
-            "latency_ms": 11.305,
+            "latency_ms": 12.249,
             "reclaim_tokens": 298230,
             "recovery_ability": false,
             "success": true
@@ -507,7 +507,7 @@
             "compaction_count": 1,
             "context_tokens": 2091,
             "final_correctness": true,
-            "latency_ms": 595.704,
+            "latency_ms": 621.345,
             "pruned_pages": 0,
             "reclaim_tokens": 284791,
             "recovery_ability": true,
@@ -583,7 +583,7 @@
             "allowed": false,
             "error_code": "EACCES",
             "expected": "DENY",
-            "latency_ms": 2.952,
+            "latency_ms": 3.401,
             "model_visible": false,
             "success": true,
             "visible_tool_count": 0
@@ -597,7 +597,7 @@
             "allowed": false,
             "error_code": "EACCES",
             "expected": "DENY",
-            "latency_ms": 49.511,
+            "latency_ms": 40.242,
             "requested_resource": "artifact://res_secret",
             "resource_reads": 0,
             "success": true
@@ -614,7 +614,7 @@
             "error_code": "EACCES",
             "expected": "DENY",
             "external_execution_count": 0,
-            "latency_ms": 2.391,
+            "latency_ms": 2.259,
             "operation_classification": "completed",
             "success": true
           },
@@ -629,7 +629,7 @@
             "expected": "Recovery without duplicate",
             "external_execution_count": 1,
             "final_session_status": "completed",
-            "latency_ms": 10.339,
+            "latency_ms": 11.373,
             "payment_count": 1,
             "pre_recovery_classification": "safe_to_retry",
             "retry_allowed": true,
@@ -645,7 +645,7 @@
             "allowed": true,
             "error_code": null,
             "expected": "Backward compatible",
-            "latency_ms": 2.023,
+            "latency_ms": 1.731,
             "output": {
               "value": "ok"
             },
@@ -834,6 +834,242 @@
     },
     {
       "baseline": {
+        "description": "A single in-memory loop that truncates context, stores large outputs inline or out of band without kernel handles, retries mutations directly, and only checks resource usage after work.",
+        "name": "naive_loop_with_truncation_and_retry",
+        "type": "conceptual_internal_baseline"
+      },
+      "benchmark_id": "B6_long_horizon_runtime_stability",
+      "category": "runtime_composition",
+      "description": "Long-horizon composition of Session replay, WAL recovery, Context VM, Resource Handle restart reads, Capability denial, Scheduler budget blocking, and Usage accounting.",
+      "failure_injection": {
+        "description": "Each profile injects a durable dispatch crash, reloads from JSONL, reconciles, restarts resource reads, denies unauthorized actions, and blocks/unblocks at a scheduler safe point.",
+        "enabled": true,
+        "point": "long_horizon_dispatch_crash_resource_restart_capability_denial_budget_pressure"
+      },
+      "fixture": {
+        "deterministic": true,
+        "fixture_id": "long_horizon_runtime_stability",
+        "fixture_version": "v0.7",
+        "offline": true,
+        "parameters": {
+          "crash_point": "after_durable_dispatch_before_commit",
+          "mechanisms": [
+            "session_event_log",
+            "recovery_replay",
+            "process_recovery_mapping",
+            "context_working_set",
+            "resource_handle_restart_read",
+            "durable_wal_reconcile",
+            "capability_denial",
+            "usage_accounting",
+            "scheduler_budget_blocking"
+          ],
+          "offline": true,
+          "profiles": [
+            100,
+            500,
+            1000
+          ]
+        }
+      },
+      "limitations": [
+        "synthetic deterministic long-horizon fixture",
+        "single-agent V0.7 runtime only",
+        "does not implement or validate Process Tree, IPC, Multi-Agent, Delegation, Namespace, or Memory",
+        "wall-clock measurements are local machine observations"
+      ],
+      "mechanism_under_test": [
+        "Session Event Log",
+        "Recovery replay",
+        "ProcessControlBlock.from_recovery",
+        "ContextManager.build_working_set",
+        "ResourceService with LocalResourceStore",
+        "DurableToolExecutor WAL and reconcile",
+        "CapabilityEvaluator denial",
+        "UsageCollector",
+        "CooperativeScheduler.safe_point"
+      ],
+      "metrics": {
+        "agent_process_session_isolation": true,
+        "budget_blocks": 3,
+        "budget_recoveries": 3,
+        "capability_denials": 9,
+        "context_reclaim_count": 3224,
+        "context_working_set_tokens_peak": 1596,
+        "duplicate_external_effects": 0,
+        "durable_operations": 3,
+        "final_durable_consistency": true,
+        "profile_count": 3,
+        "profile_steps": [
+          100,
+          500,
+          1000
+        ],
+        "raw_record_count": 3,
+        "reclaim_tokens_saved": 75551,
+        "reconcile_required_count": 3,
+        "recovered_events": 9684,
+        "recovery_failure_count": 0,
+        "recovery_success_count": 9,
+        "resource_bytes": 123781,
+        "resource_count": 30,
+        "resource_restart_success": true,
+        "session_events": 9684,
+        "steps_completed": [
+          100,
+          500,
+          1000
+        ],
+        "truth_preserved": true,
+        "unauthorized_effect_count": 0,
+        "wall_time_ms": 2680.562
+      },
+      "raw_records": [
+        {
+          "benchmark": "runtimebench_v0.7",
+          "case": "long_horizon_100_steps",
+          "metrics": {
+            "agent_process_session_isolation": true,
+            "authorization_metadata_present": true,
+            "budget_block_reason": "budget_exceeded:max_token_usage",
+            "budget_blocks": 1,
+            "budget_maximum": 999,
+            "budget_observed_usage": 1000,
+            "budget_recoveries": 1,
+            "capability_denials": 3,
+            "context_evicted_tokens": 39342,
+            "context_projected_tokens": 40938,
+            "context_reclaim_count": 208,
+            "context_working_set_tokens_peak": 1596,
+            "crash_recovered_events": 324,
+            "duplicate_external_effects": 0,
+            "durable_operations": 1,
+            "final_durable_consistency": true,
+            "profile_steps": 100,
+            "reclaim_tokens_saved": 25180,
+            "reconcile_required_count": 1,
+            "recovered_events": 628,
+            "recovery_failure_count": 0,
+            "recovery_success_count": 3,
+            "replay_time_ms": 28.254,
+            "resource_bytes": 41251,
+            "resource_count": 10,
+            "resource_read_bytes": 281,
+            "resource_reads": 10,
+            "resource_restart_success": true,
+            "session_events": 628,
+            "steps_completed": 100,
+            "success": true,
+            "token_usage": 1000,
+            "token_usage_after_budget_recovery": 2,
+            "tool_calls": 11,
+            "truth_preserved": true,
+            "unauthorized_effect_count": 0,
+            "wall_time": 0.0,
+            "wall_time_ms": 499.66
+          },
+          "strategy": "agentkernel_composed_runtime_mechanisms"
+        },
+        {
+          "benchmark": "runtimebench_v0.7",
+          "case": "long_horizon_500_steps",
+          "metrics": {
+            "agent_process_session_isolation": true,
+            "authorization_metadata_present": true,
+            "budget_block_reason": "budget_exceeded:max_token_usage",
+            "budget_blocks": 1,
+            "budget_maximum": 4999,
+            "budget_observed_usage": 5000,
+            "budget_recoveries": 1,
+            "capability_denials": 3,
+            "context_evicted_tokens": 151353,
+            "context_projected_tokens": 152949,
+            "context_reclaim_count": 1008,
+            "context_working_set_tokens_peak": 1596,
+            "crash_recovered_events": 1524,
+            "duplicate_external_effects": 0,
+            "durable_operations": 1,
+            "final_durable_consistency": true,
+            "profile_steps": 500,
+            "reclaim_tokens_saved": 25180,
+            "reconcile_required_count": 1,
+            "recovered_events": 3028,
+            "recovery_failure_count": 0,
+            "recovery_success_count": 3,
+            "replay_time_ms": 89.58,
+            "resource_bytes": 41259,
+            "resource_count": 10,
+            "resource_read_bytes": 289,
+            "resource_reads": 10,
+            "resource_restart_success": true,
+            "session_events": 3028,
+            "steps_completed": 500,
+            "success": true,
+            "token_usage": 5000,
+            "token_usage_after_budget_recovery": 2,
+            "tool_calls": 11,
+            "truth_preserved": true,
+            "unauthorized_effect_count": 0,
+            "wall_time": 0.0,
+            "wall_time_ms": 874.486
+          },
+          "strategy": "agentkernel_composed_runtime_mechanisms"
+        },
+        {
+          "benchmark": "runtimebench_v0.7",
+          "case": "long_horizon_1000_steps",
+          "metrics": {
+            "agent_process_session_isolation": true,
+            "authorization_metadata_present": true,
+            "budget_block_reason": "budget_exceeded:max_token_usage",
+            "budget_blocks": 1,
+            "budget_maximum": 9999,
+            "budget_observed_usage": 10000,
+            "budget_recoveries": 1,
+            "capability_denials": 3,
+            "context_evicted_tokens": 291354,
+            "context_projected_tokens": 292950,
+            "context_reclaim_count": 2008,
+            "context_working_set_tokens_peak": 1596,
+            "crash_recovered_events": 3024,
+            "duplicate_external_effects": 0,
+            "durable_operations": 1,
+            "final_durable_consistency": true,
+            "profile_steps": 1000,
+            "reclaim_tokens_saved": 25191,
+            "reconcile_required_count": 1,
+            "recovered_events": 6028,
+            "recovery_failure_count": 0,
+            "recovery_success_count": 3,
+            "replay_time_ms": 173.673,
+            "resource_bytes": 41271,
+            "resource_count": 10,
+            "resource_read_bytes": 301,
+            "resource_reads": 10,
+            "resource_restart_success": true,
+            "session_events": 6028,
+            "steps_completed": 1000,
+            "success": true,
+            "token_usage": 10000,
+            "token_usage_after_budget_recovery": 2,
+            "tool_calls": 11,
+            "truth_preserved": true,
+            "unauthorized_effect_count": 0,
+            "wall_time": 0.0,
+            "wall_time_ms": 1306.416
+          },
+          "strategy": "agentkernel_composed_runtime_mechanisms"
+        }
+      ],
+      "result": {
+        "oracle": "all_profiles_complete_without_truth_loss_duplicate_effects_unauthorized_effects_or_budget_recovery_failure",
+        "status": "pass"
+      },
+      "runtime_version": "AgentKernel V0.7",
+      "success": true
+    },
+    {
+      "baseline": {
         "description": "A framework where transcript, runtime state, authority, and storage driver responsibilities are not separated.",
         "name": "collapsed_agent_loop_state",
         "type": "conceptual_internal_baseline"
@@ -970,7 +1206,7 @@
       "success": true
     }
   ],
-  "commit": "23ec3ed",
+  "commit": "62caa20",
   "environment": {
     "cpu_count": 16,
     "machine": "AMD64",
@@ -979,13 +1215,13 @@
     "python": "3.12.10",
     "python_executable": "D:\\Users\\changxuan.xiao\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
   },
-  "generated_at": "2026-08-26T01:25:07.635045+00:00",
+  "generated_at": "2026-08-26T02:36:37.658177+00:00",
   "runtime_version": "AgentKernel V0.7",
   "runtimebench_version": "0.7",
   "summary": {
     "decision": "PASS",
     "failed": 0,
-    "passed": 6,
-    "total": 6
+    "passed": 7,
+    "total": 7
   }
 }
