@@ -115,6 +115,15 @@ from .loop import (
     DefaultAgentLoop,
     LoopBudgetExceeded,
 )
+from .multi_agent_recovery import (
+    DurableRecoveryObligation,
+    IntegratedRecoveryCoordinator,
+    MultiAgentRecoveryCorruptionError,
+    MultiAgentRecoveryResult,
+    ProcessRecoveryDisposition,
+    RecoveryDisposition,
+    recover_multi_agent_runtime,
+)
 from .prompt import PromptAssembly, PromptService
 from .persistence import (
     SESSION_FORMAT_VERSION,
@@ -269,6 +278,7 @@ __all__ = [
     "DelegationDecision",
     "DelegationProvenance",
     "DurableOperationRecovery",
+    "DurableRecoveryObligation",
     "DurableToolExecutionError",
     "DurableToolExecutor",
     "ErrorCode",
@@ -298,6 +308,7 @@ __all__ = [
     "InvalidProcessParent",
     "InMemoryIPCPersistence",
     "InMemorySessionPersistence",
+    "IntegratedRecoveryCoordinator",
     "JsonlIPCPersistence",
     "JsonlSessionPersistence",
     "KernelIPC",
@@ -311,6 +322,8 @@ __all__ = [
     "ModelResponse",
     "ModelUsage",
     "ModelContextLimits",
+    "MultiAgentRecoveryCorruptionError",
+    "MultiAgentRecoveryResult",
     "NoRunnableProcess",
     "PromptAssembly",
     "PromptService",
@@ -322,6 +335,7 @@ __all__ = [
     "ProcessManager",
     "ProcessNotFound",
     "ProcessPaused",
+    "ProcessRecoveryDisposition",
     "ProcessRegistryCorruptionError",
     "ProcessSessionConflict",
     "ProcessState",
@@ -330,6 +344,7 @@ __all__ = [
     "OperationRecoveryClassification",
     "PersistedSession",
     "RecoveryAnalysis",
+    "RecoveryDisposition",
     "RESOURCE_READ_ACTION",
     "RESOURCE_STAT_ACTION",
     "ExternalizationDecision",
@@ -408,6 +423,7 @@ __all__ = [
     "exceeded_budget",
     "grant_fingerprint",
     "is_scope_narrower_or_equal",
+    "recover_multi_agent_runtime",
     "resource_tool_definitions",
     "validate_budget_within",
 ]
