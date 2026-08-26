@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Callable, Mapping, NoReturn
 
+from .capabilities import (
+    DelegationProvenance,
+    capability_grant_from_payload,
+    grant_fingerprint,
+)
 from .events import EventType, SessionEvent
 from .persistence import SessionCorruptionError
 from .protocol import ErrorCode, JsonValue, ToolCall, ToolResult
@@ -140,6 +145,8 @@ def analyze_recovery(
     agent_creation_by_agent: dict[str, str] = {}
     process_creation_facts: dict[str, dict[str, JsonValue]] = {}
     process_creation_by_process: dict[str, str] = {}
+    capability_delegation_facts: dict[str, dict[str, JsonValue]] = {}
+    capability_delegation_by_child_grant: dict[str, str] = {}
 
     def fail(message: str) -> NoReturn:
         analysis = RecoveryAnalysis(
@@ -394,6 +401,15 @@ def analyze_recovery(
         }:
             _require_step(data, active_turn, active_step, fail)
             _validate_authorization_event(data, pending_calls, fail)
+            continue
+
+        if event.type is EventType.CAPABILITY_DELEGATED:
+            _validate_capability_delegated_event(
+                data,
+                capability_delegation_facts,
+                capability_delegation_by_child_grant,
+                fail,
+            )
             continue
 
         if event.type is EventType.TOOL_RESULT:
@@ -820,6 +836,45 @@ def _validate_process_created_event(
         )
     process_creation_facts[creation_id] = snapshot
     process_creation_by_process[process_id] = creation_id
+
+
+def _validate_capability_delegated_event(
+    data: Mapping[str, JsonValue],
+    delegation_facts: dict[str, dict[str, JsonValue]],
+    delegation_by_child_grant: dict[str, str],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    try:
+        provenance = DelegationProvenance.from_payload(data)
+        raw_grant = data.get("child_grant")
+        if not isinstance(raw_grant, Mapping):
+            fail("capability/delegated child_grant must be an object")
+        grant = capability_grant_from_payload(raw_grant)
+        expected = provenance.as_payload(grant)
+    except (TypeError, ValueError) as error:
+        fail(f"invalid capability/delegated event: {error}")
+    if expected != dict(data):
+        fail("capability/delegated payload is not canonical")
+    if grant.subject != provenance.child_agent_id:
+        fail("capability/delegated child_grant subject must match child_agent_id")
+    fingerprint = grant_fingerprint(grant)
+    snapshot = copy.deepcopy(dict(data))
+    existing = delegation_facts.get(provenance.delegation_id)
+    if existing is not None:
+        if existing != snapshot:
+            fail(
+                "conflicting capability/delegated delegation_id: "
+                f"{provenance.delegation_id}"
+            )
+        return
+    existing_delegation_id = delegation_by_child_grant.get(fingerprint)
+    if existing_delegation_id is not None:
+        fail(
+            "conflicting capability/delegated child grant provenance: "
+            f"{existing_delegation_id}, {provenance.delegation_id}"
+        )
+    delegation_facts[provenance.delegation_id] = snapshot
+    delegation_by_child_grant[fingerprint] = provenance.delegation_id
 
 
 def _non_empty_string(
