@@ -6,7 +6,7 @@ Post-freeze implementation note: current V0.7 release evidence implements B1
 through B7 and leaves B8 Scheduler Scalability unimplemented as a future
 micro/stress benchmark. The measured release evidence lives in
 `benchmarks/results/runtimebench_v0.7.json` and
-`docs/V0.7_RUNTIMEBENCH_REVIEW.md`.
+`docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md`.
 
 Decision:
 
@@ -952,10 +952,10 @@ overhead using deterministic offline fixtures.
 
 ## 13. Output Report Design
 
-Future generated human report:
+Human evidence report:
 
 ```text
-docs/RUNTIMEBENCH_V0.7_RESULTS.md
+docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md
 ```
 
 Future generated JSON:

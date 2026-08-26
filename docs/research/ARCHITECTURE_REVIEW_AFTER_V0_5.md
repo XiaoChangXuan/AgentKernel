@@ -166,7 +166,7 @@ solve agent runtime problems, not copying an OS surface.
 
 ## Benchmark Review
 
-Source data: `benchmarks/results/all.json` and `docs/benchmark/RESULTS.md`.
+Source data: `benchmarks/results/all.json` and `docs/research/AGENT_RUNTIME_BENCHMARK_RESULTS.md`.
 
 ### Resource Handle
 

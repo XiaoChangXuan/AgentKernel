@@ -1,83 +1,89 @@
 # AgentKernel Documentation
 
-This file is the navigation entrypoint for AgentKernel documentation. Historical
-documents are retained for design history; they are not necessarily current
-authoritative specifications.
+This file is the navigation entrypoint for AgentKernel documentation.
+Historical and research notes are retained for design evolution; they are not
+necessarily current authoritative specifications.
 
 ## Start Here
 
-1. [../README.md](../README.md)
-2. [ARCHITECTURE.md](ARCHITECTURE.md)
-3. [AGENTKERNEL_EVALUATION_STRATEGY.md](AGENTKERNEL_EVALUATION_STRATEGY.md)
-4. [RUNTIMEBENCH_V0.7_DESIGN.md](RUNTIMEBENCH_V0.7_DESIGN.md)
-5. [V0.7_RUNTIMEBENCH_REVIEW.md](V0.7_RUNTIMEBENCH_REVIEW.md)
-6. [V0.7_RELEASE.md](V0.7_RELEASE.md)
+1. [Project README](../README.md)
+2. [Current Architecture](ARCHITECTURE.md)
+3. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+4. [RuntimeBench V0.7 Design](evaluation/RUNTIMEBENCH_V0.7_DESIGN.md)
+5. [RuntimeBench Evidence Review](evaluation/V0.7_RUNTIMEBENCH_REVIEW.md)
+6. [V0.7 Release](releases/V0.7_RELEASE.md)
 
-## Current / Canonical
+## Canonical Documents
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): implemented runtime architecture.
-- [V0.7_RELEASE.md](V0.7_RELEASE.md): V0.7 public release summary.
-- [V0.7_RUNTIMEBENCH_REVIEW.md](V0.7_RUNTIMEBENCH_REVIEW.md): current evidence,
-  claims, and limitations.
-- [RUNTIMEBENCH_V0.7_DESIGN.md](RUNTIMEBENCH_V0.7_DESIGN.md): RuntimeBench
-  family design and schema.
-- [AGENTKERNEL_EVALUATION_STRATEGY.md](AGENTKERNEL_EVALUATION_STRATEGY.md):
-  evaluation positioning and claim discipline.
+- [Current architecture](ARCHITECTURE.md): implemented runtime architecture.
+- [Current evaluation strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md):
+  evaluated claims and claim discipline.
+- [RuntimeBench V0.7 design](evaluation/RUNTIMEBENCH_V0.7_DESIGN.md):
+  benchmark structure, schema, fixtures, and methodology.
+- [RuntimeBench V0.7 evidence review](evaluation/V0.7_RUNTIMEBENCH_REVIEW.md):
+  measured V0.7 evidence and limitations.
+- [B6 long-horizon evidence](evaluation/V0.7_LONG_HORIZON_RUNTIMEBENCH.md):
+  deterministic long-horizon RuntimeBench evidence.
+- [V0.7 release](releases/V0.7_RELEASE.md): public release summary.
 
 ## Current Architecture
 
-- [ARCHITECTURE.md](ARCHITECTURE.md)
-- [KERNEL_ARCHITECTURE_REVIEW.md](KERNEL_ARCHITECTURE_REVIEW.md)
-- [V0.5_RESOURCE_ARCHITECTURE.md](V0.5_RESOURCE_ARCHITECTURE.md)
-- [V0.5_RESOURCE_ARCHITECTURE_REVIEW.md](V0.5_RESOURCE_ARCHITECTURE_REVIEW.md)
-- [V0.6_CAPABILITY_ARCHITECTURE_DESIGN.md](V0.6_CAPABILITY_ARCHITECTURE_DESIGN.md)
-- [V0.6_CAPABILITY_FREEZE_REVIEW.md](V0.6_CAPABILITY_FREEZE_REVIEW.md)
-- [V0.6_CAPABILITY_FINAL_REVIEW.md](V0.6_CAPABILITY_FINAL_REVIEW.md)
-- [V0.7_PROCESS_ARCHITECTURE_REVIEW.md](V0.7_PROCESS_ARCHITECTURE_REVIEW.md)
-- [V0.7_RUNTIME_ARCHITECTURE_REVIEW.md](V0.7_RUNTIME_ARCHITECTURE_REVIEW.md)
-- [V0.7_RELEASE_REVIEW.md](V0.7_RELEASE_REVIEW.md)
+- [Kernel Architecture Review](architecture/KERNEL_ARCHITECTURE_REVIEW.md)
+- [Architecture Freeze Review](architecture/ARCHITECTURE_FREEZE_REVIEW.md)
+- [V0.5 Resource Architecture](architecture/V0.5_RESOURCE_ARCHITECTURE.md)
+- [V0.5 Resource Architecture Review](architecture/V0.5_RESOURCE_ARCHITECTURE_REVIEW.md)
+- [V0.6 Capability Architecture Design](architecture/V0.6_CAPABILITY_ARCHITECTURE_DESIGN.md)
+- [V0.6 Capability Freeze Review](architecture/V0.6_CAPABILITY_FREEZE_REVIEW.md)
+- [V0.6 Capability Final Review](architecture/V0.6_CAPABILITY_FINAL_REVIEW.md)
+- [V0.7 Process Architecture Review](architecture/V0.7_PROCESS_ARCHITECTURE_REVIEW.md)
+- [V0.7 Runtime Architecture Review](architecture/V0.7_RUNTIME_ARCHITECTURE_REVIEW.md)
 
-## Current Evaluation
+## Evaluation
 
-- [AGENTKERNEL_EVALUATION_STRATEGY.md](AGENTKERNEL_EVALUATION_STRATEGY.md):
-  why AgentKernel is evaluated and which claims are allowed.
-- [RUNTIMEBENCH_V0.7_DESIGN.md](RUNTIMEBENCH_V0.7_DESIGN.md): how RuntimeBench
-  is structured, including B1 through B8.
-- [V0.7_RUNTIMEBENCH_IMPLEMENTATION.md](V0.7_RUNTIMEBENCH_IMPLEMENTATION.md):
-  how the current RuntimeBench runner is implemented.
-- [V0.7_RUNTIMEBENCH_REVIEW.md](V0.7_RUNTIMEBENCH_REVIEW.md): current measured
-  evidence and limitations.
-- [V0.7_LONG_HORIZON_RUNTIMEBENCH.md](V0.7_LONG_HORIZON_RUNTIMEBENCH.md): B6
-  long-horizon RuntimeBench evidence.
-- [V0.7_RUNTIME_BENCHMARK.md](V0.7_RUNTIME_BENCHMARK.md): earlier V0.7 runtime
-  primitive benchmark report.
-- [benchmark/RESULTS.md](benchmark/RESULTS.md): historical benchmark report
-  location retained for compatibility.
+- [AgentKernel Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md):
+  what claims are evaluated.
+- [RuntimeBench V0.7 Design](evaluation/RUNTIMEBENCH_V0.7_DESIGN.md):
+  benchmark structure and methodology.
+- [RuntimeBench V0.7 Implementation](evaluation/V0.7_RUNTIMEBENCH_IMPLEMENTATION.md):
+  RuntimeBench runner implementation record.
+- [RuntimeBench V0.7 Review](evaluation/V0.7_RUNTIMEBENCH_REVIEW.md):
+  actual evidence and limitations.
+- [V0.7 Long-Horizon RuntimeBench](evaluation/V0.7_LONG_HORIZON_RUNTIMEBENCH.md):
+  B6 composition evidence.
 
 ## Implementation Notes
 
-- [V0.6_CAPABILITY_IMPLEMENTATION.md](V0.6_CAPABILITY_IMPLEMENTATION.md)
-- [V0.6_CAPABILITY_ENFORCEMENT_IMPLEMENTATION.md](V0.6_CAPABILITY_ENFORCEMENT_IMPLEMENTATION.md)
-- [V0.6_CAPABILITY_DURABLE_IMPLEMENTATION.md](V0.6_CAPABILITY_DURABLE_IMPLEMENTATION.md)
-- [V0.7_PROCESS_CORE_IMPLEMENTATION.md](V0.7_PROCESS_CORE_IMPLEMENTATION.md)
-- [V0.7_SCHEDULER_IMPLEMENTATION.md](V0.7_SCHEDULER_IMPLEMENTATION.md)
-- [V0.7_RESOURCE_ACCOUNTING.md](V0.7_RESOURCE_ACCOUNTING.md)
-- [V0.7_RUNTIMEBENCH_IMPLEMENTATION.md](V0.7_RUNTIMEBENCH_IMPLEMENTATION.md)
+- [V0.6 Capability Implementation](implementation/V0.6_CAPABILITY_IMPLEMENTATION.md)
+- [V0.6 Capability Enforcement Implementation](implementation/V0.6_CAPABILITY_ENFORCEMENT_IMPLEMENTATION.md)
+- [V0.6 Capability Durable Implementation](implementation/V0.6_CAPABILITY_DURABLE_IMPLEMENTATION.md)
+- [V0.7 Process Core Implementation](implementation/V0.7_PROCESS_CORE_IMPLEMENTATION.md)
+- [V0.7 Scheduler Implementation](implementation/V0.7_SCHEDULER_IMPLEMENTATION.md)
+- [V0.7 Resource Accounting](implementation/V0.7_RESOURCE_ACCOUNTING.md)
 
-## Historical / Research Notes
+## Releases
 
-These documents are useful design history. They may contain earlier framing,
-open questions, or pre-freeze wording.
+- [V0.4 Release](releases/V0.4_RELEASE.md)
+- [V0.7 Release](releases/V0.7_RELEASE.md)
+- [V0.7 Release Freeze Review](releases/V0.7_RELEASE_REVIEW.md)
 
-- [AGENT_RUNTIME_POSITIONING_REVIEW.md](AGENT_RUNTIME_POSITIONING_REVIEW.md)
-- [AGENT_RUNTIME_COMPARISON.md](AGENT_RUNTIME_COMPARISON.md)
-- [AGENT_RUNTIME_BENCHMARK_DESIGN.md](AGENT_RUNTIME_BENCHMARK_DESIGN.md)
-- [ARCHITECTURE_FREEZE_REVIEW.md](ARCHITECTURE_FREEZE_REVIEW.md)
-- [ARCHITECTURE_REVIEW_AFTER_V0_5.md](ARCHITECTURE_REVIEW_AFTER_V0_5.md)
-- [CONTEXT_COMPACTION_RESEARCH.md](CONTEXT_COMPACTION_RESEARCH.md)
-- [CONTEXT_PROVIDER_RECOVERY_RESEARCH.md](CONTEXT_PROVIDER_RECOVERY_RESEARCH.md)
-- [RESOURCE_LAYER_RESEARCH.md](RESOURCE_LAYER_RESEARCH.md)
-- [IMPLEMENTATION_BLUEPRINT.md](IMPLEMENTATION_BLUEPRINT.md)
+## Research / Historical Notes
+
+These documents preserve architecture evolution, earlier benchmark framing, and
+comparison research. They may contain superseded paths, earlier assumptions, or
+pre-freeze language, so they should not be treated as current specifications
+without checking the canonical documents above.
+
+- [Agent Runtime Positioning Review](research/AGENT_RUNTIME_POSITIONING_REVIEW.md)
+- [Agent Runtime Comparison](research/AGENT_RUNTIME_COMPARISON.md)
+- [Agent Runtime Benchmark Design](research/AGENT_RUNTIME_BENCHMARK_DESIGN.md)
+- [Architecture Review After V0.5](research/ARCHITECTURE_REVIEW_AFTER_V0_5.md)
+- [Context Compaction Research](research/CONTEXT_COMPACTION_RESEARCH.md)
+- [Context Provider Recovery Research](research/CONTEXT_PROVIDER_RECOVERY_RESEARCH.md)
+- [Resource Layer Research](research/RESOURCE_LAYER_RESEARCH.md)
+- [Implementation Blueprint](research/IMPLEMENTATION_BLUEPRINT.md)
+- [V0.7 Runtime Benchmark](research/V0.7_RUNTIME_BENCHMARK.md)
+- [Historical Agent Runtime Benchmark](research/AGENT_RUNTIME_BENCHMARK.md)
+- [Historical Agent Runtime Benchmark Results](research/AGENT_RUNTIME_BENCHMARK_RESULTS.md)
 
 ## Benchmark Result Files
 

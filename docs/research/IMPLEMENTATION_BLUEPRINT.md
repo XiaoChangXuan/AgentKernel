@@ -834,7 +834,7 @@ V1 AgentOS
 你正在实现 AgentKernel 的 <MODULE>。
 
 先阅读：
-1. docs/IMPLEMENTATION_BLUEPRINT.md
+1. docs/research/IMPLEMENTATION_BLUEPRINT.md
 2. 与该模块相关的现有 interface/tests
 3. 对应参考实现（DeepSeek Harness / Linux subsystem）
 
