@@ -8,8 +8,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 import uuid
 
-from .accounting import UsageCollector, UsageLimitExceeded
-from .agent import AgentControlBlock, AgentRegistry
+from .accounting import (
+    BudgetHierarchyError,
+    HostBudget,
+    UsageCollector,
+    UsageLimitExceeded,
+    validate_budget_within,
+)
+from .agent import AgentBudget, AgentControlBlock, AgentRegistry
 from .events import EventType, SessionEvent
 from .process import ProcessControlBlock, ProcessState
 from .protocol import JsonValue
@@ -62,11 +68,18 @@ class ProcessPaused(SchedulerError):
 class ProcessCancelled(SchedulerError):
     """Raised when a process reaches a cooperative cancellation safe point."""
 
-    def __init__(self, process_id: str, safe_point: "SchedulerSafePoint") -> None:
+    def __init__(
+        self,
+        process_id: str,
+        safe_point: "SchedulerSafePoint",
+        reason: str = "cancelled",
+    ) -> None:
         self.process_id = process_id
         self.safe_point = SchedulerSafePoint(safe_point)
+        self.reason = reason
         super().__init__(
-            f"process {process_id} cancelled at safe point {self.safe_point.value}"
+            f"process {process_id} cancelled at safe point "
+            f"{self.safe_point.value}: {reason}"
         )
 
 
@@ -103,6 +116,23 @@ class SchedulerSafePoint(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ProcessFaultNotification:
+    """Runtime-only supervisor-visible process fault observation."""
+
+    process_id: str
+    agent_id: str
+    parent_process_id: str | None
+    reason: str
+    exit_status: str
+
+    def __post_init__(self) -> None:
+        if not self.process_id or not self.agent_id or not self.reason:
+            raise ValueError("process_id, agent_id, and reason must not be empty")
+        if not self.exit_status:
+            raise ValueError("exit_status must not be empty")
+
+
+@dataclass(frozen=True, slots=True)
 class _ProcessCreationFact:
     process_id: str
     agent_id: str
@@ -119,6 +149,12 @@ class ProcessManager:
         self._children: dict[str, list[str]] = {}
         self._agent_registry = agent_registry
 
+    @property
+    def agent_registry(self) -> AgentRegistry | None:
+        """Return the optional Agent registry used for ownership validation."""
+
+        return self._agent_registry
+
     def create_process(
         self,
         *,
@@ -126,6 +162,7 @@ class ProcessManager:
         agent: AgentControlBlock,
         parent_process_id: str | None = None,
         priority: int = 0,
+        budget: AgentBudget | None = None,
         admit: bool = True,
         record_session: Session | None = None,
         creation_id: str | None = None,
@@ -137,7 +174,9 @@ class ProcessManager:
             agent=agent,
             parent_process_id=parent_process_id,
             priority=priority,
+            budget=budget,
         )
+        self._validate_process_budget(process, agent.budget)
         self._validate_new_process(process)
         if record_session is not None:
             self._append_process_created(record_session, process, creation_id)
@@ -153,6 +192,7 @@ class ProcessManager:
         process_id: str,
         agent: AgentControlBlock,
         priority: int = 0,
+        budget: AgentBudget | None = None,
         admit: bool = True,
         record_session: Session | None = None,
         creation_id: str | None = None,
@@ -168,6 +208,7 @@ class ProcessManager:
             agent=agent,
             parent_process_id=parent_process_id,
             priority=priority,
+            budget=budget,
             admit=admit,
             record_session=record_session,
             creation_id=creation_id,
@@ -392,6 +433,22 @@ class ProcessManager:
             raise ProcessTreeError(
                 "process session_id does not match owning agent primary session"
             )
+        self._validate_process_budget(process, agent.budget)
+
+    @staticmethod
+    def _validate_process_budget(
+        process: ProcessControlBlock,
+        agent_budget: AgentBudget,
+    ) -> None:
+        try:
+            validate_budget_within(
+                process.budget,
+                agent_budget,
+                child_name=f"process {process.process_id!r}",
+                parent_name=f"agent {process.agent_id!r}",
+            )
+        except BudgetHierarchyError as error:
+            raise ProcessTreeError(str(error)) from error
 
     def _insert(self, process: ProcessControlBlock) -> None:
         self._processes[process.process_id] = process
@@ -540,12 +597,17 @@ class CooperativeScheduler:
         manager: ProcessManager | None = None,
         *,
         usage_collector: UsageCollector | None = None,
+        host_budget: HostBudget | None = None,
+        agent_budgets: Mapping[str, AgentBudget] | None = None,
     ) -> None:
         self._manager = manager or ProcessManager()
         self._usage_collector = usage_collector
+        self._host_budget = host_budget
+        self._agent_budgets: dict[str, AgentBudget] = dict(agent_budgets or {})
         self._ready: deque[str] = deque()
         self._waiting: dict[str, str] = {}
         self._blocked: dict[str, str] = {}
+        self._faults: list[ProcessFaultNotification] = []
 
     @property
     def manager(self) -> ProcessManager:
@@ -558,6 +620,12 @@ class CooperativeScheduler:
         """Return the optional process usage collector."""
 
         return self._usage_collector
+
+    @property
+    def host_budget(self) -> HostBudget | None:
+        """Return the current Host runtime budget ceiling, if configured."""
+
+        return self._host_budget
 
     @property
     def ready_queue(self) -> tuple[str, ...]:
@@ -585,14 +653,25 @@ class CooperativeScheduler:
         agent: AgentControlBlock,
         parent_process_id: str | None = None,
         priority: int = 0,
+        budget: AgentBudget | None = None,
     ) -> ProcessControlBlock:
         """Create, admit, and enqueue a process."""
 
+        self._remember_agent_budget(agent)
+        scheduler_agent_budget = self._agent_budget_for(agent.agent_id)
+        if scheduler_agent_budget is not None:
+            self._validate_budget_against_agent(
+                budget or agent.budget,
+                scheduler_agent_budget,
+                process_id=process_id,
+                agent_id=agent.agent_id,
+            )
         process = self._manager.create_process(
             process_id=process_id,
             agent=agent,
             parent_process_id=parent_process_id,
             priority=priority,
+            budget=budget,
             admit=True,
         )
         self._enqueue_ready(process.process_id)
@@ -601,7 +680,16 @@ class CooperativeScheduler:
     def add_process(self, process: ProcessControlBlock) -> None:
         """Register an existing process and index it by lifecycle state."""
 
+        agent_budget = self._agent_budget_for(process.agent_id)
+        if agent_budget is not None:
+            self._validate_budget_against_agent(
+                process.budget,
+                agent_budget,
+                process_id=process.process_id,
+                agent_id=process.agent_id,
+            )
         self._manager.register(process)
+        self._remember_agent_budget_from_registry(process.agent_id)
         self._index_process(process)
 
     def admit(self, process_id: str) -> ProcessControlBlock:
@@ -736,15 +824,93 @@ class CooperativeScheduler:
         self._enqueue_ready(process_id)
         return process
 
-    def request_cancel(self, process_id: str) -> None:
+    def request_cancel(self, process_id: str, reason: str = "cancelled") -> None:
         """Request cooperative cancellation at the next safe point."""
 
-        self._manager.get(process_id).request_cancel()
+        self._manager.get(process_id).request_cancel(reason)
 
-    def cancel(self, process_id: str) -> None:
+    def cancel(self, process_id: str, reason: str = "cancelled") -> None:
         """Alias for request_cancel."""
 
-        self.request_cancel(process_id)
+        self.request_cancel(process_id, reason)
+
+    def request_cancel_subtree(
+        self,
+        process_id: str,
+        reason: str = "cancelled",
+    ) -> tuple[str, ...]:
+        """Request structured cancellation over a Process subtree.
+
+        RUNNING processes observe the request at a future safe point. Processes
+        that are not executing are moved to EXITED immediately so cancellation
+        cannot strand WAITING, BLOCKED, PAUSED, READY, or CREATED descendants.
+        """
+
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("cancellation reason must be a non-empty string")
+        process_ids = (process_id, *self._manager.descendants_of(process_id))
+        requested: list[str] = []
+        for current_id in process_ids:
+            process = self._manager.get(current_id)
+            if process.state is ProcessState.EXITED:
+                continue
+            process.request_cancel(reason)
+            requested.append(current_id)
+            if process.state is ProcessState.RUNNING:
+                continue
+            self._cleanup_indexes(current_id)
+            process.transition(ProcessState.EXITED, exit_status=reason)
+        return tuple(requested)
+
+    def cancel_subtree(
+        self,
+        process_id: str,
+        reason: str = "cancelled",
+    ) -> tuple[str, ...]:
+        """Alias for request_cancel_subtree."""
+
+        return self.request_cancel_subtree(process_id, reason)
+
+    def record_process_fault(
+        self,
+        process_id: str,
+        reason: str,
+    ) -> ProcessFaultNotification:
+        """Record a runtime-only process fault without mutating supervisors."""
+
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("fault reason must be a non-empty string")
+        process = self._manager.get(process_id)
+        exit_status = f"failed:{reason}"
+        if process.state is not ProcessState.EXITED:
+            self.exit_process(process_id, exit_status=exit_status)
+        else:
+            exit_status = process.exit_status or exit_status
+        notification = ProcessFaultNotification(
+            process_id=process.process_id,
+            agent_id=process.agent_id,
+            parent_process_id=process.parent_process_id,
+            reason=reason,
+            exit_status=exit_status,
+        )
+        self._faults.append(notification)
+        return notification
+
+    def child_faults_of(
+        self,
+        process_id: str,
+    ) -> tuple[ProcessFaultNotification, ...]:
+        """Return recorded direct child fault notifications for a supervisor."""
+
+        self._manager.get(process_id)
+        children = set(self._manager.children_of(process_id))
+        return tuple(fault for fault in self._faults if fault.process_id in children)
+
+    @property
+    def fault_notifications(self) -> tuple[ProcessFaultNotification, ...]:
+        """Return runtime-only process fault observations."""
+
+        return tuple(self._faults)
 
     def exit_process(
         self,
@@ -771,8 +937,12 @@ class CooperativeScheduler:
         point = SchedulerSafePoint(point)
         process = self._manager.get(process_id)
         if process.cancel_requested:
-            self.exit_process(process_id, exit_status="cancelled")
-            raise ProcessCancelled(process_id, point)
+            cancel_reason = process.cancel_reason or "cancelled"
+            self.exit_process(
+                process_id,
+                exit_status=cancel_reason,
+            )
+            raise ProcessCancelled(process_id, point, cancel_reason)
         if process.pause_requested:
             self._cleanup_indexes(process_id)
             if process.state is not ProcessState.PAUSED:
@@ -780,11 +950,12 @@ class CooperativeScheduler:
             raise ProcessPaused(process_id, point)
         exceeded = self.check_budget(process_id)
         if exceeded is not None:
+            reason = self._budget_blocked_reason(process_id, exceeded)
             self._cleanup_indexes(process_id)
             if process.state is ProcessState.RUNNING:
                 process.transition(
                     ProcessState.BLOCKED,
-                    blocked_reason=f"budget_exceeded:{exceeded.limit}",
+                    blocked_reason=reason,
                 )
                 assert process.blocked_reason is not None
                 self._blocked[process_id] = process.blocked_reason
@@ -792,12 +963,85 @@ class CooperativeScheduler:
         return process
 
     def check_budget(self, process_id: str) -> UsageLimitExceeded | None:
-        """Evaluate process runtime usage against its optional budget."""
+        """Evaluate process, Agent aggregate, and Host aggregate budgets."""
 
         if self._usage_collector is None:
             return None
         process = self._manager.get(process_id)
-        return self._usage_collector.exceeded_budget(process_id, process.budget)
+        exceeded = self._usage_collector.exceeded_budget(
+            process_id,
+            process.budget,
+            scope="process",
+            subject=process_id,
+        )
+        if exceeded is not None:
+            return exceeded
+        agent_budget = self._agent_budget_for(process.agent_id)
+        if agent_budget is not None:
+            exceeded = self._usage_collector.exceeded_agent_budget(
+                process.agent_id,
+                self._manager.list_processes(),
+                agent_budget,
+            )
+            if exceeded is not None:
+                return exceeded
+        if self._host_budget is not None:
+            return self._usage_collector.exceeded_host_budget(
+                self._manager.list_processes(),
+                self._host_budget,
+            )
+        return None
+
+    def update_host_budget(self, budget: HostBudget | None) -> None:
+        """Replace the Host runtime ceiling after Host policy approval."""
+
+        if budget is not None and not isinstance(budget, HostBudget):
+            raise TypeError("host budget must be a HostBudget or None")
+        self._host_budget = budget
+
+    def update_agent_budget(self, agent_id: str, budget: AgentBudget) -> None:
+        """Replace an Agent aggregate runtime ceiling after Host policy approval."""
+
+        if not isinstance(agent_id, str) or not agent_id:
+            raise ValueError("agent_id must be a non-empty string")
+        if not isinstance(budget, AgentBudget):
+            raise TypeError("agent budget must be an AgentBudget")
+        for process in self._manager.list_processes():
+            if process.agent_id == agent_id:
+                self._validate_budget_against_agent(
+                    process.budget,
+                    budget,
+                    process_id=process.process_id,
+                    agent_id=agent_id,
+                )
+        self._agent_budgets[agent_id] = budget
+
+    def update_process_budget(
+        self,
+        process_id: str,
+        budget: AgentBudget,
+    ) -> None:
+        """Replace a process runtime ceiling after Host policy approval."""
+
+        if not isinstance(budget, AgentBudget):
+            raise TypeError("process budget must be an AgentBudget")
+        process = self._manager.get(process_id)
+        agent_budget = self._agent_budget_for(process.agent_id)
+        if agent_budget is not None:
+            self._validate_budget_against_agent(
+                budget,
+                agent_budget,
+                process_id=process_id,
+                agent_id=process.agent_id,
+            )
+        object.__setattr__(process, "budget", budget)
+
+    def reset_usage(self, process_id: str) -> None:
+        """Reset runtime-only counters for a process, if accounting is enabled."""
+
+        if self._usage_collector is None:
+            return
+        self._usage_collector.reset_process(process_id)
 
     def _index_process(self, process: ProcessControlBlock) -> None:
         if process.state is ProcessState.READY:
@@ -809,6 +1053,55 @@ class CooperativeScheduler:
             and process.blocked_reason is not None
         ):
             self._blocked[process.process_id] = process.blocked_reason
+
+    def _remember_agent_budget(self, agent: AgentControlBlock) -> None:
+        existing = self._agent_budgets.get(agent.agent_id)
+        if existing is None:
+            self._agent_budgets[agent.agent_id] = agent.budget
+
+    def _remember_agent_budget_from_registry(self, agent_id: str) -> None:
+        if agent_id in self._agent_budgets:
+            return
+        registry = self._manager.agent_registry
+        if registry is not None and registry.contains(agent_id):
+            self._agent_budgets[agent_id] = registry.get(agent_id).budget
+
+    def _agent_budget_for(self, agent_id: str) -> AgentBudget | None:
+        budget = self._agent_budgets.get(agent_id)
+        if budget is not None:
+            return budget
+        self._remember_agent_budget_from_registry(agent_id)
+        return self._agent_budgets.get(agent_id)
+
+    @staticmethod
+    def _validate_budget_against_agent(
+        process_budget: AgentBudget,
+        agent_budget: AgentBudget,
+        *,
+        process_id: str,
+        agent_id: str,
+    ) -> None:
+        try:
+            validate_budget_within(
+                process_budget,
+                agent_budget,
+                child_name=f"process {process_id!r}",
+                parent_name=f"agent {agent_id!r}",
+            )
+        except BudgetHierarchyError as error:
+            raise ProcessTreeError(str(error)) from error
+
+    @staticmethod
+    def _budget_blocked_reason(
+        process_id: str,
+        exceeded: UsageLimitExceeded,
+    ) -> str:
+        if exceeded.scope == "process":
+            return f"budget:process:{exceeded.subject or process_id}:{exceeded.limit}"
+        if exceeded.scope == "agent":
+            assert exceeded.subject is not None
+            return f"budget:agent:{exceeded.subject}:{exceeded.limit}"
+        return f"budget:host:{exceeded.limit}"
 
     def _enqueue_ready(self, process_id: str) -> None:
         process = self._manager.get(process_id)
