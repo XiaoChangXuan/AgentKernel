@@ -412,6 +412,14 @@ def analyze_recovery(
             )
             continue
 
+        if event.type in {
+            EventType.IPC_SEND,
+            EventType.IPC_RECEIVE,
+            EventType.IPC_ACK,
+        }:
+            _validate_ipc_audit_event(event.type, data, fail)
+            continue
+
         if event.type is EventType.TOOL_RESULT:
             _require_step(data, active_turn, active_step, fail)
             call_id = data.get("call_id")
@@ -875,6 +883,41 @@ def _validate_capability_delegated_event(
         )
     delegation_facts[provenance.delegation_id] = snapshot
     delegation_by_child_grant[fingerprint] = provenance.delegation_id
+
+
+def _validate_ipc_audit_event(
+    event_type: EventType,
+    data: Mapping[str, JsonValue],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    expected = {
+        "message_id",
+        "channel_id",
+        "sender_agent_id",
+        "sender_process_id",
+        "receiver_agent_id",
+        "receiver_process_id",
+        "sequence",
+        "correlation_id",
+    }
+    if event_type is EventType.IPC_RECEIVE:
+        expected = {*expected, "delivery_attempts"}
+    if set(data) != expected:
+        fail(f"{event_type.value} has unexpected fields")
+    _non_empty_string(data, "message_id", fail)
+    _non_empty_string(data, "channel_id", fail)
+    _non_empty_string(data, "sender_agent_id", fail)
+    _non_empty_string(data, "sender_process_id", fail)
+    _non_empty_string(data, "receiver_agent_id", fail)
+    receiver_process_id = data.get("receiver_process_id")
+    if receiver_process_id is not None and (
+        not isinstance(receiver_process_id, str) or not receiver_process_id
+    ):
+        fail(f"{event_type.value} receiver_process_id must be null or non-empty")
+    _positive_int(data, "sequence", fail)
+    _non_empty_string(data, "correlation_id", fail)
+    if event_type is EventType.IPC_RECEIVE:
+        _positive_int(data, "delivery_attempts", fail)
 
 
 def _non_empty_string(
