@@ -1,70 +1,94 @@
-# AgentKernel Runtime Benchmark Suite v0.1
+# AgentKernel RuntimeBench
 
-This suite measures AgentKernel runtime mechanisms. It is offline by default and
-does not call model providers, external APIs, or network services.
+RuntimeBench is the canonical benchmark entrypoint for AgentKernel release
+evidence. It is offline and deterministic by default. It does not call real
+model providers, external APIs, or network services.
 
-It is not a model benchmark. It does not compare GPT, Claude, Gemini, Codex, or
-any other agent product. The benchmarks isolate four runtime properties:
-
-- Context Management
-- Crash Recovery
-- Durable Execution
-- Resource Management
-
-## Commands
-
-Run one benchmark:
+Canonical command:
 
 ```bash
-python -m benchmarks.resource_handle.runner
-python -m benchmarks.durable_tool.runner
-python -m benchmarks.recovery.runner
-python -m benchmarks.context_vm.runner
+python -m benchmarks.runtimebench
 ```
 
-Run the whole suite:
+Canonical machine-readable result:
+
+```text
+benchmarks/results/runtimebench_v0.7.json
+```
+
+Canonical human-readable interpretation:
+
+```text
+docs/V0.7_RUNTIMEBENCH_REVIEW.md
+```
+
+## Current V0.7 Evidence
+
+| Family | Result |
+| --- | --- |
+| B1 Fault Tolerance | PASS |
+| B2 Side Effect Safety | PASS |
+| B3 Context + Truth Preservation | PASS |
+| B4 Capability Isolation | PASS |
+| B5 Resource Governance | PASS |
+| B7 Boundary Isolation | PASS |
+
+Summary:
+
+```text
+total = 6
+passed = 6
+failed = 0
+decision = PASS
+```
+
+## Not Implemented In Current Release Evidence
+
+- B6 Long-Horizon Runtime Stability.
+- B8 Scheduler Scalability.
+
+B8 is a future micro/stress benchmark only. It is not a headline research claim.
+
+## Benchmark Flow
+
+```text
+leaf benchmark
+    |
+    v
+RuntimeBench adapter
+    |
+    v
+canonical RuntimeBench result
+```
+
+Leaf benchmarks remain available for mechanism development, debugging, and raw
+evidence generation. Release claims should use RuntimeBench.
+
+## Leaf Benchmark Mapping
+
+| Leaf benchmark | RuntimeBench family |
+| --- | --- |
+| `benchmarks/recovery/runner.py` | B1 Fault Tolerance |
+| `benchmarks/durable_tool/runner.py` | B2 Side Effect Safety |
+| `benchmarks/resource_handle/runner.py` | B3 Context + Truth Preservation |
+| `benchmarks/context_vm/runner.py` | B3 Context + Truth Preservation |
+| `benchmarks/capability_runtime_benchmark.py` | B4 Capability Isolation |
+| `benchmarks/v0_7_runtime_benchmark.py` | B1, B5, B7 source material |
+| `benchmarks/runtimebench/adapters.py` | B5 Resource Governance and B7 Boundary Isolation RuntimeBench cases |
+
+## Leaf Commands
+
+These commands remain useful for local debugging:
 
 ```bash
+python -m benchmarks.recovery.runner
+python -m benchmarks.durable_tool.runner
+python -m benchmarks.resource_handle.runner
+python -m benchmarks.context_vm.runner
+python -m benchmarks.capability_runtime_benchmark
+python -m benchmarks.v0_7_runtime_benchmark
 python -m benchmarks.run_all
 ```
 
-Outputs are JSON arrays of records with this shape:
-
-```json
-{
-  "benchmark": "resource_handle",
-  "case": "100MB_tool_result",
-  "strategy": "artifact_handle",
-  "metrics": {
-    "context_bytes": 12345,
-    "resource_bytes": 104857600,
-    "latency_ms": 2.5,
-    "success": true
-  }
-}
-```
-
-Default result files are written under `benchmarks/results/`:
-
-- `resource.json`
-- `durable_tool.json`
-- `recovery.json`
-- `context_vm.json`
-- `all.json`
-
-## Benchmark Notes
-
-The Resource Handle benchmark uses real `ResourceService`, `LocalResourceStore`,
-`ResourceHandle`, and model-facing `resource_read` tool definitions for the
-Artifact Handle strategy. Full-history and pruning strategies simulate
-model-visible context growth without writing huge transcripts into Session JSONL.
-
-The Durable Tool benchmark uses a deterministic fake payment service and a real
-AgentKernel WAL prefix. Recovery is driven through `operation_id` and reconcile.
-
-The Crash Recovery benchmark writes JSONL Session prefixes and reloads them to
-measure replay classification.
-
-The Context VM benchmark uses a 1000-turn deterministic fixture and `ScriptedLLM`
-for compaction. It measures projection, pruning, compaction, working-set
-selection, and replayable compaction events.
+Their result files under `benchmarks/results/` are leaf, historical, or
+diagnostic results unless explicitly wrapped by RuntimeBench.

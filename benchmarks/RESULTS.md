@@ -1,103 +1,58 @@
-# Context VM real-provider benchmark result
+# AgentKernel Benchmark Results
 
-Run date: 2026-08-25
+This file is a compatibility and navigation entrypoint. It is not the canonical
+V0.7 release evidence report.
 
-Provider model: `azure/gpt-5.4-2026-03-05`
+Canonical aggregate result:
 
-Command: `AGENTKERNEL_RUN_REAL_BENCHMARK=1 python -m benchmarks.context_real_provider_benchmark`
-
-No endpoint or credential is recorded here.
-
-## Resource efficiency
-
-Actual Provider usage is shown in tokens. Phase 2/3 makes two calls on the first
-compaction turn: one summary call and one final quality call. `Total input` includes
-both so the first-compaction cost is not hidden.
-
-| Case | Mode | Final input | Summary input | Total input | Calls | Seconds |
-|---|---|---:|---:|---:|---:|---:|
-| Early constraint | Full | 13,665 | 0 | 13,665 | 1 | 4.54 |
-| Early constraint | Phase 1 | 5,602 | 0 | 5,602 | 1 | 3.43 |
-| Early constraint | Phase 2/3 | 2,992 | 3,311 | 6,303 | 2 | 11.35 |
-| Middle decision | Full | 13,670 | 0 | 13,670 | 1 | 3.95 |
-| Middle decision | Phase 1 | 5,607 | 0 | 5,607 | 1 | 3.62 |
-| Middle decision | Phase 2/3 | 2,993 | 3,318 | 6,311 | 2 | 10.02 |
-| Large Tool tail | Full | 13,668 | 0 | 13,668 | 1 | 4.40 |
-| Large Tool tail | Phase 1 | 5,605 | 0 | 5,605 | 1 | 5.34 |
-| Large Tool tail | Phase 2/3 | 2,949 | 3,314 | 6,263 | 2 | 8.40 |
-
-Mean actual usage:
-
-| Mode | Final input | First-turn total input | Calls | Mean seconds |
-|---|---:|---:|---:|---:|
-| Full | 13,668 | 13,668 | 1 | 4.30 |
-| Phase 1 | 5,605 | 5,605 | 1 | 4.13 |
-| Phase 2/3 | 2,978 | 6,292 | 2 | 9.92 |
-
-- Phase 2/3 first-compaction total input is 54.0% below Full.
-- Its post-compaction final request is 78.2% below Full and 46.9% below Phase 1.
-- The summary call makes the first Phase 2/3 turn 12.3% more input-expensive than
-  Phase 1, but that checkpoint is durable and can be reused on later turns.
-- No Provider overflow occurred in these nine quality requests. Overflow recovery is
-  covered by deterministic offline tests, including the exactly-one-retry guard.
-
-## Task quality
-
-| Case | Full | Phase 1 | Phase 2/3 |
-|---|---:|---:|---:|
-| Early constraint retained | pass | pass | pass |
-| Middle decision retained | pass | pass | pass |
-| Large Tool Result tail error identified | pass | fail | pass |
-
-Full and Phase 2/3 both passed 3/3 cases. Phase 1 passed 2/3 and failed to identify
-the `FATAL: permission denied` evidence after eviction. Phase 2/3 retained that fact
-through deterministic Tool Result pruning and semantic compaction.
-
-## Accounting observations
-
-The deterministic request estimator is intentionally not treated as exact Provider
-billing:
-
-- It overestimated the Full requests (about 16.9K estimated vs 13.7K actual).
-- It underestimated Phase 1 (about 4.83K estimated vs 5.60K actual).
-- It was closer for the Phase 2/3 final request (about 2.82K estimated vs 2.98K actual).
-
-This variance confirms why normalized Provider overflow recovery remains necessary
-even with complete-request fallback accounting.
-
-## Release interpretation
-
-The benchmark supports closing V0.4: Context VM materially reduced real Provider
-input while matching Full History on all three scoped quality checks. This is not a
-general coding-agent success-rate claim. The fixture is small, uses one model, and
-does not measure long-horizon SWE-bench performance or production cost variance.
-# V0.5 Resource Handle benchmark (2026-08-25)
-
-Command:
-
-```bash
-python -m benchmarks.resource_handle_benchmark --sizes-mb 10,100 --json
+```text
+benchmarks/results/runtimebench_v0.7.json
 ```
 
-The workload is deterministic local UTF-8 log text. `Full` stores and projects
-the entire Tool Result. `V0.4 Pruning` keeps the full Session event but applies
-the existing deterministic Context Page pruner. `V0.5 Handle` stores raw bytes
-in LocalResourceStore and places only an 8 KiB head, 4 KiB tail, omission marker,
-and handle in Session. Estimated tokens use the offline approximate estimator;
-latency is one 64 KiB handle read after creating a new ResourceService instance.
+Human-readable evidence review:
 
-| Input | Strategy | Model-visible bytes | Est. tokens | Session bytes | Resource bytes | Raw retained | Restart read | Read latency |
-|---:|---|---:|---:|---:|---:|---|---|---:|
-| 10 MiB | Full | 10,695,548 | 2,673,887 | 10,696,754 | 0 | yes | yes | n/a |
-| 10 MiB | V0.4 Pruning | 49,196 | 12,299 | 10,696,758 | 0 | yes | yes | n/a |
-| 10 MiB | V0.5 Handle | 13,027 | 3,257 | 14,214 | 10,486,245 | yes | yes | 2.256 ms |
-| 100 MiB | Full | 106,954,825 | 26,738,707 | 106,956,034 | 0 | yes | yes | n/a |
-| 100 MiB | V0.4 Pruning | 49,197 | 12,300 | 106,956,029 | 0 | yes | yes | n/a |
-| 100 MiB | V0.5 Handle | 13,030 | 3,258 | 14,215 | 104,858,086 | yes | yes | 2.657 ms |
+```text
+docs/V0.7_RUNTIMEBENCH_REVIEW.md
+```
 
-For the 100 MiB case, V0.5 reduced the semantic Session artifact by about
-99.987% relative to Full while retaining all raw bytes in the separate Resource
-artifact. V0.4 already bounded model context, but its Session artifact remained
-about 107 MB; V0.5 kept both model projection and Session small. These numbers
-are local mechanism measurements, not end-to-end model quality or production
-storage throughput claims.
+Canonical command:
+
+```bash
+python -m benchmarks.runtimebench
+```
+
+## Current V0.7 RuntimeBench Summary
+
+| Family | Result |
+| --- | --- |
+| B1 Fault Tolerance | PASS |
+| B2 Side Effect Safety | PASS |
+| B3 Context + Truth Preservation | PASS |
+| B4 Capability Isolation | PASS |
+| B5 Resource Governance | PASS |
+| B7 Boundary Isolation | PASS |
+
+```text
+total = 6
+passed = 6
+failed = 0
+decision = PASS
+```
+
+## Leaf / Historical / Diagnostic Results
+
+The files below are retained as leaf benchmark outputs and historical release
+evidence. They remain useful for debugging individual mechanisms, but they are
+not the top-level V0.7 release claim surface:
+
+- `benchmarks/results/resource.json`
+- `benchmarks/results/durable_tool.json`
+- `benchmarks/results/recovery.json`
+- `benchmarks/results/context_vm.json`
+- `benchmarks/results/capability_runtime.json`
+- `benchmarks/results/v0.7_runtime.json`
+- `benchmarks/results/all.json`
+
+Earlier real-provider Context VM observations are retained in git history. Real
+provider runs require explicit local configuration and are not part of default
+pytest or RuntimeBench release evidence.
