@@ -5,11 +5,64 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Callable
 
 from .agent import AgentBudget
 from .protocol import ModelUsage
 from .resources.model import ResourceMetricsSnapshot
+
+
+RUNTIME_BUDGET_FIELDS: tuple[str, ...] = (
+    "max_token_usage",
+    "max_model_cost",
+    "max_total_tool_calls",
+    "max_resource_reads",
+    "max_resource_bytes",
+    "max_wall_time_seconds",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HostBudget:
+    """Runtime ceilings for the current Kernel host process.
+
+    HostBudget is an enforcement input, not a principal, account, or durable
+    billing ledger.
+    """
+
+    max_token_usage: int | None = None
+    max_model_cost: float | None = None
+    max_total_tool_calls: int | None = None
+    max_resource_reads: int | None = None
+    max_resource_bytes: int | None = None
+    max_wall_time_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "max_token_usage",
+            "max_total_tool_calls",
+            "max_resource_reads",
+            "max_resource_bytes",
+        ):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative integer")
+        for name in ("max_model_cost", "max_wall_time_seconds"):
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(f"{name} must be a non-negative number")
+
+
+class BudgetHierarchyError(ValueError):
+    """Raised when runtime budget ceilings violate hierarchy constraints."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,15 +103,23 @@ class ProcessUsageSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class UsageLimitExceeded:
-    """One runtime budget violation observed for a process."""
+    """One runtime budget violation observed at a Kernel budget scope."""
 
     limit: str
     usage: int | float
     maximum: int | float
+    scope: str = "process"
+    subject: str | None = None
 
     def __post_init__(self) -> None:
         if not self.limit:
             raise ValueError("limit must not be empty")
+        if self.scope not in {"process", "agent", "host"}:
+            raise ValueError("scope must be process, agent, or host")
+        if self.scope in {"process", "agent"} and not self.subject:
+            raise ValueError("process and agent budget violations require subject")
+        if self.scope == "host" and self.subject is not None:
+            raise ValueError("host budget violations must not have subject")
 
 
 @dataclass(slots=True)
@@ -182,14 +243,84 @@ class UsageCollector:
             wall_time=wall_time,
         )
 
+    def aggregate_snapshot(
+        self,
+        process_id: str,
+        source_process_ids: Iterable[str],
+    ) -> ProcessUsageSnapshot:
+        """Return an aggregate runtime snapshot across process ids."""
+
+        return aggregate_usage_snapshots(
+            process_id,
+            (self.snapshot(source_id) for source_id in source_process_ids),
+        )
+
+    def usage_for_agent(
+        self,
+        agent_id: str,
+        processes: Iterable[object],
+    ) -> ProcessUsageSnapshot:
+        """Aggregate live process usage attributed to one Agent principal."""
+
+        if not isinstance(agent_id, str) or not agent_id:
+            raise ValueError("agent_id must be a non-empty string")
+        process_ids = (
+            process.process_id
+            for process in processes
+            if getattr(process, "agent_id", None) == agent_id and _process_is_live(process)
+        )
+        return self.aggregate_snapshot(f"agent:{agent_id}", process_ids)
+
+    def host_usage(self, processes: Iterable[object]) -> ProcessUsageSnapshot:
+        """Aggregate live process usage across the current Kernel runtime."""
+
+        process_ids = (
+            process.process_id for process in processes if _process_is_live(process)
+        )
+        return self.aggregate_snapshot("host", process_ids)
+
     def exceeded_budget(
         self,
         process_id: str,
-        budget: AgentBudget,
+        budget: AgentBudget | HostBudget,
+        *,
+        scope: str = "process",
+        subject: str | None = None,
     ) -> UsageLimitExceeded | None:
         """Return the first exceeded runtime budget limit, if any."""
 
-        return exceeded_budget(self.snapshot(process_id), budget)
+        return exceeded_budget(
+            self.snapshot(process_id),
+            budget,
+            scope=scope,
+            subject=subject if subject is not None else (
+                process_id if scope != "host" else None
+            ),
+        )
+
+    def exceeded_agent_budget(
+        self,
+        agent_id: str,
+        processes: Iterable[object],
+        budget: AgentBudget,
+    ) -> UsageLimitExceeded | None:
+        """Return the first exceeded aggregate Agent budget limit, if any."""
+
+        return exceeded_budget(
+            self.usage_for_agent(agent_id, processes),
+            budget,
+            scope="agent",
+            subject=agent_id,
+        )
+
+    def exceeded_host_budget(
+        self,
+        processes: Iterable[object],
+        budget: HostBudget,
+    ) -> UsageLimitExceeded | None:
+        """Return the first exceeded aggregate Host budget limit, if any."""
+
+        return exceeded_budget(self.host_usage(processes), budget, scope="host")
 
     def _ensure_started(self, process_id: str) -> _UsageCounters:
         self.start_process(process_id)
@@ -211,7 +342,10 @@ class UsageCollector:
 
 def exceeded_budget(
     snapshot: ProcessUsageSnapshot,
-    budget: AgentBudget,
+    budget: AgentBudget | HostBudget,
+    *,
+    scope: str = "process",
+    subject: str | None = None,
 ) -> UsageLimitExceeded | None:
     """Evaluate optional process runtime quotas against a usage snapshot."""
 
@@ -225,8 +359,85 @@ def exceeded_budget(
     )
     for limit, usage, maximum in checks:
         if maximum is not None and usage > maximum:
-            return UsageLimitExceeded(limit=limit, usage=usage, maximum=maximum)
+            return UsageLimitExceeded(
+                limit=limit,
+                usage=usage,
+                maximum=maximum,
+                scope=scope,
+                subject=subject or (snapshot.process_id if scope != "host" else None),
+            )
     return None
+
+
+def aggregate_usage_snapshots(
+    process_id: str,
+    snapshots: Iterable[ProcessUsageSnapshot],
+) -> ProcessUsageSnapshot:
+    """Create a deterministic aggregate snapshot from process snapshots."""
+
+    totals = {
+        "token_usage": 0,
+        "model_cost": 0.0,
+        "tool_calls": 0,
+        "resource_reads": 0,
+        "resource_bytes": 0,
+        "wall_time": 0.0,
+    }
+    for snapshot in snapshots:
+        if not isinstance(snapshot, ProcessUsageSnapshot):
+            raise TypeError("snapshots must contain ProcessUsageSnapshot values")
+        totals["token_usage"] += snapshot.token_usage
+        totals["model_cost"] += snapshot.model_cost
+        totals["tool_calls"] += snapshot.tool_calls
+        totals["resource_reads"] += snapshot.resource_reads
+        totals["resource_bytes"] += snapshot.resource_bytes
+        totals["wall_time"] += snapshot.wall_time
+    return ProcessUsageSnapshot(process_id=process_id, **totals)
+
+
+def effective_runtime_budget(
+    *budgets: AgentBudget | HostBudget | None,
+) -> HostBudget:
+    """Return the strictest per-process runtime ceiling across all budgets."""
+
+    values: dict[str, int | float | None] = {}
+    for field in RUNTIME_BUDGET_FIELDS:
+        present = [
+            getattr(budget, field)
+            for budget in budgets
+            if budget is not None and getattr(budget, field) is not None
+        ]
+        values[field] = min(present) if present else None
+    return HostBudget(**values)
+
+
+def validate_budget_within(
+    child: AgentBudget | HostBudget,
+    parent: AgentBudget | HostBudget,
+    *,
+    child_name: str = "child",
+    parent_name: str = "parent",
+) -> None:
+    """Validate that explicit child ceilings do not exceed parent ceilings.
+
+    None means no local limit, so it does not violate a finite parent ceiling;
+    enforcement still checks the parent aggregate budget at safe points.
+    """
+
+    for field in RUNTIME_BUDGET_FIELDS:
+        child_limit = getattr(child, field)
+        parent_limit = getattr(parent, field)
+        if child_limit is not None and parent_limit is not None:
+            if child_limit > parent_limit:
+                raise BudgetHierarchyError(
+                    f"{child_name} budget {field} exceeds "
+                    f"{parent_name} budget"
+                )
+
+
+def _process_is_live(process: object) -> bool:
+    state = getattr(process, "state", None)
+    return getattr(state, "value", state) != "EXITED"
 
 
 def _validate_source(source: str) -> str:

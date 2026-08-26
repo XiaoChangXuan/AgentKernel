@@ -182,7 +182,8 @@ def _budget_blocking() -> BenchmarkRecord:
                 and exceeded_limit == "max_token_usage"
                 and exceeded_usage == 11
                 and process.state is ProcessState.BLOCKED
-                and process.blocked_reason == "budget_exceeded:max_token_usage"
+                and process.blocked_reason
+                == "budget:process:process-budget:max_token_usage"
             ),
         },
     )

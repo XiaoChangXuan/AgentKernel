@@ -114,9 +114,9 @@ def test_scheduler_blocks_running_process_when_budget_is_exceeded() -> None:
 
     assert captured.value.exceeded.limit == "max_token_usage"
     assert process.state is ProcessState.BLOCKED
-    assert process.blocked_reason == "budget_exceeded:max_token_usage"
+    assert process.blocked_reason == "budget:process:process-1:max_token_usage"
     assert scheduler.blocked_registry == {
-        "process-1": "budget_exceeded:max_token_usage"
+        "process-1": "budget:process:process-1:max_token_usage"
     }
 
 

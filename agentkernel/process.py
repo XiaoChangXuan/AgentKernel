@@ -104,6 +104,7 @@ class ProcessControlBlock:
     wait_reason: str | None = None
     blocked_reason: str | None = None
     cancel_requested: bool = False
+    cancel_reason: str | None = None
     pause_requested: bool = False
     capability_snapshot: CapabilitySnapshot | None = None
     exit_status: str | None = None
@@ -119,6 +120,12 @@ class ProcessControlBlock:
             raise TypeError("budget must be an AgentBudget")
         if not isinstance(self.cancel_requested, bool):
             raise TypeError("cancel_requested must be a boolean")
+        if self.cancel_reason is not None and (
+            not isinstance(self.cancel_reason, str) or not self.cancel_reason
+        ):
+            raise ValueError("cancel_reason must be None or a non-empty string")
+        if self.cancel_reason is not None and not self.cancel_requested:
+            raise ValueError("cancel_reason requires cancel_requested")
         if not isinstance(self.pause_requested, bool):
             raise TypeError("pause_requested must be a boolean")
         if self.capability_snapshot is None:
@@ -136,6 +143,7 @@ class ProcessControlBlock:
         agent: AgentControlBlock,
         parent_process_id: str | None = None,
         priority: int = 0,
+        budget: AgentBudget | None = None,
     ) -> "ProcessControlBlock":
         """Create a process in CREATED state from an Agent principal."""
 
@@ -146,7 +154,7 @@ class ProcessControlBlock:
             state=ProcessState.CREATED,
             parent_process_id=parent_process_id,
             priority=priority,
-            budget=agent.budget,
+            budget=budget or agent.budget,
             capability_snapshot=CapabilitySnapshot.from_agent(agent),
         )
 
@@ -159,6 +167,7 @@ class ProcessControlBlock:
         recovery: RecoveryAnalysis,
         parent_process_id: str | None = None,
         priority: int = 0,
+        budget: AgentBudget | None = None,
     ) -> "ProcessControlBlock":
         """Reconstruct live process state from durable recovery facts."""
 
@@ -170,7 +179,7 @@ class ProcessControlBlock:
             state=recovered.state,
             parent_process_id=parent_process_id,
             priority=priority,
-            budget=agent.budget,
+            budget=budget or agent.budget,
             blocked_reason=recovered.blocked_reason,
             capability_snapshot=CapabilitySnapshot.from_agent(agent),
             exit_status=recovered.exit_status,
@@ -214,12 +223,14 @@ class ProcessControlBlock:
             exit_status if target is ProcessState.EXITED else None,
         )
 
-    def request_cancel(self) -> None:
+    def request_cancel(self, reason: str = "cancelled") -> None:
         """Record a sticky cancellation request checked by future schedulers."""
 
         if self.state is ProcessState.EXITED:
-            raise RuntimeError("cannot cancel an exited process")
+            return
+        _require_non_empty(reason, "cancel_reason")
         object.__setattr__(self, "cancel_requested", True)
+        object.__setattr__(self, "cancel_reason", reason)
 
     def request_pause(self) -> None:
         """Record a sticky pause request checked by future schedulers."""

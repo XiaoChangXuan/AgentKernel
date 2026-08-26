@@ -1310,7 +1310,8 @@ def _budget_record(
         and observed["limit"] == expected_limit
         and maximum == expected_maximum
         and process.state is ProcessState.BLOCKED
-        and process.blocked_reason == f"budget_exceeded:{expected_limit}"
+        and process.blocked_reason
+        == f"budget:process:{process.process_id}:{expected_limit}"
     )
     metrics = {
         "safe_point": safe_point.value,
