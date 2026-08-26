@@ -78,6 +78,28 @@ def resource_governance_fixture() -> FixtureSpec:
     )
 
 
+def long_horizon_fixture() -> FixtureSpec:
+    return FixtureSpec(
+        fixture_id="long_horizon_runtime_stability",
+        parameters={
+            "profiles": [100, 500, 1000],
+            "mechanisms": [
+                "session_event_log",
+                "recovery_replay",
+                "process_recovery_mapping",
+                "context_working_set",
+                "resource_handle_restart_read",
+                "durable_wal_reconcile",
+                "capability_denial",
+                "usage_accounting",
+                "scheduler_budget_blocking",
+            ],
+            "crash_point": "after_durable_dispatch_before_commit",
+            "offline": True,
+        },
+    )
+
+
 def boundary_isolation_fixture() -> FixtureSpec:
     return FixtureSpec(
         fixture_id="kernel_object_boundary_invariants",
