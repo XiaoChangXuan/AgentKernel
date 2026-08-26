@@ -31,21 +31,24 @@ docs/V0.7_RUNTIMEBENCH_REVIEW.md
 | B3 Context + Truth Preservation | PASS |
 | B4 Capability Isolation | PASS |
 | B5 Resource Governance | PASS |
+| B6 Long-Horizon Runtime Stability | PASS |
 | B7 Boundary Isolation | PASS |
 
 Summary:
 
 ```text
-total = 6
-passed = 6
+total = 7
+passed = 7
 failed = 0
 decision = PASS
 ```
 
 ## Not Implemented In Current Release Evidence
 
-- B6 Long-Horizon Runtime Stability.
 - B8 Scheduler Scalability.
+
+B6 Long-Horizon Runtime Stability is implemented for deterministic
+single-agent profiles at 100, 500, and 1000 logical steps.
 
 B8 is a future micro/stress benchmark only. It is not a headline research claim.
 
@@ -75,6 +78,7 @@ evidence generation. Release claims should use RuntimeBench.
 | `benchmarks/capability_runtime_benchmark.py` | B4 Capability Isolation |
 | `benchmarks/v0_7_runtime_benchmark.py` | B1, B5, B7 source material |
 | `benchmarks/runtimebench/adapters.py` | B5 Resource Governance and B7 Boundary Isolation RuntimeBench cases |
+| `benchmarks/runtimebench/long_horizon.py` | B6 Long-Horizon Runtime Stability |
 
 ## Leaf Commands
 

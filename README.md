@@ -120,20 +120,22 @@ Current implemented RuntimeBench families:
 | B3 Context + Truth Preservation | PASS |
 | B4 Capability Isolation | PASS |
 | B5 Resource Governance | PASS |
+| B6 Long-Horizon Runtime Stability | PASS |
 | B7 Boundary Isolation | PASS |
 
 Current summary:
 
 ```text
-total = 6
-passed = 6
+total = 7
+passed = 7
 failed = 0
 decision = PASS
 ```
 
-B6 Long-Horizon Runtime Stability and B8 Scheduler Scalability are not included
-in the current release evidence. B8 is a future micro/stress benchmark, not a
-headline research claim.
+B6 covers deterministic single-agent long-horizon profiles at 100, 500, and
+1000 logical steps. B8 Scheduler Scalability is not implemented in the current
+release evidence. B8 is a future micro/stress benchmark, not a headline
+research claim.
 
 ## Run
 
@@ -188,6 +190,8 @@ The V0.7 alpha evidence supports only scoped runtime-mechanism claims:
   operations.
 - Scheduler and Accounting can block process execution at cooperative safe
   points when configured budgets are exceeded.
+- V0.1-V0.7 runtime mechanisms preserve tested invariants in deterministic
+  single-agent workloads up to 1000 logical steps.
 - Kernel object boundaries remain separated in tested single-agent V0.7
   fixtures.
 
@@ -205,6 +209,9 @@ AgentKernel V0.7 alpha does not include:
 - Production sandbox security.
 - Preemptive scheduling.
 - Universal exactly-once side effects.
+- General production scalability.
+- Semantic long-horizon reasoning.
+- B8 scheduler scalability evidence.
 - Claims of superior model intelligence.
 - Claims that AgentKernel beats Codex, OpenHands, Gemini CLI, LangChain, Letta,
   or any other project.
