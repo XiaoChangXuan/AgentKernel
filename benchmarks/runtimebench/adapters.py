@@ -3,7 +3,32 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from tempfile import TemporaryDirectory
 
+from agentkernel import (
+    Agent,
+    AgentBudget,
+    ApproximateTokenEstimator,
+    AuthorizationRequest,
+    CapabilityEvaluator,
+    CapabilityGrant,
+    ContextProjector,
+    CooperativeScheduler,
+    EventType,
+    LocalResourceStore,
+    ModelUsage,
+    ProcessBudgetExceeded,
+    ProcessControlBlock,
+    ProcessState,
+    RESOURCE_READ_ACTION,
+    ResourceAccessDenied,
+    ResourceMetrics,
+    ResourceOwner,
+    ResourceService,
+    SchedulerSafePoint,
+    Session,
+    UsageCollector,
+)
 from benchmarks.capability_runtime_benchmark import run as run_capability_runtime
 from benchmarks.common.metrics import BenchmarkRecord
 from benchmarks.context_vm.runner import run as run_context_vm
@@ -11,9 +36,11 @@ from benchmarks.durable_tool.runner import run as run_durable_tool
 from benchmarks.recovery.runner import run as run_recovery
 from benchmarks.resource_handle.runner import run as run_resource_handle
 from benchmarks.runtimebench.fixtures import (
+    boundary_isolation_fixture,
     capability_attack_fixture,
     context_truth_fixture,
     crash_fixture,
+    resource_governance_fixture,
     side_effect_fixture,
 )
 from benchmarks.runtimebench.schema import (
@@ -27,13 +54,15 @@ from benchmarks.v0_7_runtime_benchmark import run as run_v07_runtime
 
 
 def run_v0_7_families() -> list[RuntimeBenchRecord]:
-    """Run the first RuntimeBench implementation phase: B1 through B4."""
+    """Run the implemented RuntimeBench V0.7 families."""
 
     return [
         fault_tolerance_record(),
         side_effect_safety_record(),
         context_truth_record(),
         capability_isolation_record(),
+        resource_governance_record(),
+        boundary_isolation_record(),
     ]
 
 
@@ -344,6 +373,801 @@ def capability_isolation_record() -> RuntimeBenchRecord:
         ),
         raw_records=_raw_dicts(records),
     )
+
+
+def resource_governance_record() -> RuntimeBenchRecord:
+    records = _resource_governance_records()
+    blocked_records = [
+        record
+        for record in records
+        if record.case
+        in {
+            "token_budget_safe_point",
+            "tool_budget_safe_point",
+            "resource_budget_safe_point",
+            "wall_time_budget_safe_point",
+        }
+    ]
+    success = all(_success(record) for record in records)
+    blocked_correctness = all(
+        bool(_metric(record, "blocked", False))
+        and _metric(record, "process_state") == ProcessState.BLOCKED.value
+        for record in blocked_records
+    )
+    budget_overshoot = round(
+        sum(_overshoot(record) for record in blocked_records),
+        4,
+    )
+    resource_case = _find(records, "resource_budget_safe_point", case=True)
+    usage_case = _find(records, "usage_snapshot_accuracy", case=True)
+    unblock_case = _find(records, "unblock_recovery", case=True)
+
+    return RuntimeBenchRecord(
+        benchmark_id="B5_resource_governance",
+        category="runtime_governance",
+        description=(
+            "Process runtime usage observation and cooperative scheduler "
+            "blocking at resource budget safe points."
+        ),
+        fixture=resource_governance_fixture(),
+        mechanism_under_test=(
+            "ProcessUsageSnapshot",
+            "UsageCollector",
+            "CooperativeScheduler.safe_point",
+            "AgentBudget runtime limits",
+            "BLOCKED process state",
+        ),
+        baseline=BaselineSpec(
+            name="naive_post_run_accounting",
+            type="conceptual_internal_baseline",
+            description=(
+                "A loop that counts usage only after work completes and cannot "
+                "stop at kernel safe points."
+            ),
+        ),
+        failure_injection=FailureInjectionSpec(
+            enabled=True,
+            point="budget_pressure_at_cooperative_safe_points",
+            description=(
+                "Token, tool-call, resource-byte, and wall-time limits are "
+                "exceeded before scheduler safe points."
+            ),
+        ),
+        metrics={
+            "budget_case_count": len(blocked_records),
+            "blocked_case_count": sum(
+                1 for record in blocked_records if bool(_metric(record, "blocked"))
+            ),
+            "budget_overshoot": budget_overshoot,
+            "blocked_correctness": blocked_correctness,
+            "resource_usage_accuracy": bool(
+                _metric(resource_case, "resource_usage_accuracy", False)
+            ),
+            "usage_snapshot_accuracy": bool(
+                _metric(usage_case, "usage_snapshot_accuracy", False)
+            ),
+            "safe_point_blocking_success": blocked_correctness,
+            "unblock_correctness": bool(
+                _metric(unblock_case, "unblock_correctness", False)
+            ),
+            "wall_time_observed": bool(
+                _metric(
+                    _find(records, "wall_time_budget_safe_point", case=True),
+                    "wall_time_observed",
+                    False,
+                )
+            ),
+            "budget_recovery_success": _success(unblock_case),
+            "raw_record_count": len(records),
+        },
+        result=ResultSpec(
+            status=status_for(success),
+            oracle="usage_observation_blocks_processes_at_scheduler_safe_points",
+        ),
+        success=success,
+        limitations=(
+            "cooperative safe points only",
+            "synthetic deterministic resource pressure",
+            "accounting is runtime observation, not durable billing truth",
+            "does not implement preemptive scheduling or V0.8 process trees",
+        ),
+        raw_records=_raw_dicts(records),
+    )
+
+
+def boundary_isolation_record() -> RuntimeBenchRecord:
+    records = _boundary_isolation_records()
+    success = all(_success(record) for record in records)
+    authority_leak_count = sum(
+        int(_metric(record, "authority_leak", 0)) for record in records
+    )
+    durable_truth_mutation_count = sum(
+        int(_metric(record, "durable_truth_mutation", 0)) for record in records
+    )
+    object_identity_confusion_count = sum(
+        int(_metric(record, "object_identity_confusion", 0)) for record in records
+    )
+    regression_count = sum(0 if _success(record) else 1 for record in records)
+
+    return RuntimeBenchRecord(
+        benchmark_id="B7_boundary_isolation",
+        category="runtime_object_model",
+        description=(
+            "Kernel object-model invariant checks for Agent, Process, Session, "
+            "Context, Accounting, and ResourceStore boundaries."
+        ),
+        fixture=boundary_isolation_fixture(),
+        mechanism_under_test=(
+            "Agent as capability principal",
+            "Process as runtime identity",
+            "Session as durable truth",
+            "Context Page as projection",
+            "Usage accounting as observation",
+            "ResourceStore as storage",
+        ),
+        baseline=BaselineSpec(
+            name="collapsed_agent_loop_state",
+            type="conceptual_internal_baseline",
+            description=(
+                "A framework where transcript, runtime state, authority, and "
+                "storage driver responsibilities are not separated."
+            ),
+        ),
+        failure_injection=FailureInjectionSpec(
+            enabled=True,
+            point="kernel_object_boundary_invariants",
+            description=(
+                "Process identity, accounting, context projection, and store "
+                "access are exercised without granting them authority."
+            ),
+        ),
+        metrics={
+            "boundary_invariant_passed": success,
+            "authority_leak_count": authority_leak_count,
+            "durable_truth_mutation_count": durable_truth_mutation_count,
+            "object_identity_confusion_count": object_identity_confusion_count,
+            "regression_count": regression_count,
+            "raw_record_count": len(records),
+        },
+        result=ResultSpec(
+            status=status_for(success),
+            oracle="runtime_objects_preserve_kernel_boundary_invariants",
+        ),
+        success=success,
+        limitations=(
+            "single-agent runtime only",
+            "does not test delegation, namespace, IPC, or memory",
+            "ResourceStore boundary is checked through ResourceService denial",
+            "context projection checks do not measure semantic answer quality",
+        ),
+        raw_records=_raw_dicts(records),
+    )
+
+
+def _resource_governance_records() -> list[BenchmarkRecord]:
+    return [
+        _token_budget_case(),
+        _tool_budget_case(),
+        _resource_budget_case(),
+        _wall_time_budget_case(),
+        _usage_snapshot_accuracy_case(),
+        _unblock_recovery_case(),
+    ]
+
+
+def _token_budget_case() -> BenchmarkRecord:
+    collector = UsageCollector(clock=_FakeClock())
+    scheduler = CooperativeScheduler(usage_collector=collector)
+    process = _running_process(
+        scheduler,
+        process_id="process-token-budget",
+        agent_id="agent-token-budget",
+        session_id="session-token-budget",
+        budget=AgentBudget(max_token_usage=10),
+    )
+    collector.record_llm_usage(
+        process.process_id,
+        ModelUsage(input_tokens=7, output_tokens=4, total_tokens=11),
+    )
+    observed = _capture_budget_block(
+        scheduler,
+        process.process_id,
+        SchedulerSafePoint.AFTER_LLM_CALL,
+    )
+
+    return _budget_record(
+        case="token_budget_safe_point",
+        safe_point=SchedulerSafePoint.AFTER_LLM_CALL,
+        expected_limit="max_token_usage",
+        expected_maximum=10,
+        observed=observed,
+        process=process,
+    )
+
+
+def _tool_budget_case() -> BenchmarkRecord:
+    collector = UsageCollector(clock=_FakeClock())
+    scheduler = CooperativeScheduler(usage_collector=collector)
+    process = _running_process(
+        scheduler,
+        process_id="process-tool-budget",
+        agent_id="agent-tool-budget",
+        session_id="session-tool-budget",
+        budget=AgentBudget(max_total_tool_calls=1),
+    )
+    collector.record_tool_call(process.process_id, count=2)
+    observed = _capture_budget_block(
+        scheduler,
+        process.process_id,
+        SchedulerSafePoint.AFTER_TOOL_CALL,
+    )
+
+    return _budget_record(
+        case="tool_budget_safe_point",
+        safe_point=SchedulerSafePoint.AFTER_TOOL_CALL,
+        expected_limit="max_total_tool_calls",
+        expected_maximum=1,
+        observed=observed,
+        process=process,
+    )
+
+
+def _resource_budget_case() -> BenchmarkRecord:
+    clock = _FakeClock()
+    collector = UsageCollector(clock=clock)
+    scheduler = CooperativeScheduler(usage_collector=collector)
+    process = _running_process(
+        scheduler,
+        process_id="process-resource-budget",
+        agent_id="agent-resource-budget",
+        session_id="session-resource-budget",
+        budget=AgentBudget(max_resource_bytes=4),
+    )
+    metrics = ResourceMetrics()
+    owner = ResourceOwner("agent-resource-budget", "session-resource-budget")
+    with TemporaryDirectory(prefix="agentkernel-runtimebench-") as root:
+        service = ResourceService(
+            LocalResourceStore(root),
+            metrics=metrics,
+            resource_id_factory=lambda: "res_budget",
+            handle_id_factory=lambda: "hdl_budget",
+        )
+        handle = service.create_artifact(
+            b"0123456789",
+            owner=owner,
+            media_type="text/plain",
+            encoding="utf-8",
+            source_tool_name="fixture.resource",
+            source_tool_call_id="call-resource",
+            source_operation_id="op-resource",
+        )
+        collector.begin_resource_metrics(process.process_id, metrics.snapshot())
+        service.read(handle.uri, owner=owner, offset=0, limit=6)
+        collector.observe_resource_metrics(process.process_id, metrics.snapshot())
+
+    snapshot = collector.snapshot(process.process_id)
+    observed = _capture_budget_block(
+        scheduler,
+        process.process_id,
+        SchedulerSafePoint.AFTER_TOOL_CALL,
+    )
+    record = _budget_record(
+        case="resource_budget_safe_point",
+        safe_point=SchedulerSafePoint.AFTER_TOOL_CALL,
+        expected_limit="max_resource_bytes",
+        expected_maximum=4,
+        observed=observed,
+        process=process,
+        extra={
+            "resource_reads": snapshot.resource_reads,
+            "resource_bytes": snapshot.resource_bytes,
+            "resource_usage_accuracy": (
+                snapshot.resource_reads == 1 and snapshot.resource_bytes == 6
+            ),
+        },
+    )
+    return record
+
+
+def _wall_time_budget_case() -> BenchmarkRecord:
+    clock = _FakeClock()
+    collector = UsageCollector(clock=clock)
+    scheduler = CooperativeScheduler(usage_collector=collector)
+    process = _running_process(
+        scheduler,
+        process_id="process-wall-time-budget",
+        agent_id="agent-wall-time-budget",
+        session_id="session-wall-time-budget",
+        budget=AgentBudget(max_wall_time_seconds=1.0),
+    )
+    collector.start_process(process.process_id)
+    clock.advance(1.25)
+    observed = _capture_budget_block(
+        scheduler,
+        process.process_id,
+        SchedulerSafePoint.BEFORE_STEP_START,
+    )
+
+    return _budget_record(
+        case="wall_time_budget_safe_point",
+        safe_point=SchedulerSafePoint.BEFORE_STEP_START,
+        expected_limit="max_wall_time_seconds",
+        expected_maximum=1.0,
+        observed=observed,
+        process=process,
+        extra={"wall_time_observed": observed["usage"] == 1.25},
+    )
+
+
+def _usage_snapshot_accuracy_case() -> BenchmarkRecord:
+    clock = _FakeClock()
+    collector = UsageCollector(clock=clock)
+    process_id = "process-usage-snapshot"
+    collector.start_process(process_id)
+    collector.record_llm_usage(
+        process_id,
+        ModelUsage(input_tokens=8, output_tokens=5, total_tokens=13),
+        model_cost=0.125,
+    )
+    collector.record_tool_call(process_id, count=3)
+    collector.record_resource_read(process_id, 512)
+    collector.record_resource_read(process_id, 256)
+    clock.advance(2.0)
+    snapshot = collector.snapshot(process_id)
+    success = (
+        snapshot.token_usage == 13
+        and snapshot.model_cost == 0.125
+        and snapshot.tool_calls == 3
+        and snapshot.resource_reads == 2
+        and snapshot.resource_bytes == 768
+        and snapshot.wall_time == 2.0
+    )
+
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="usage_snapshot_accuracy",
+        strategy="process_usage_snapshot_totals",
+        metrics={
+            "token_usage": snapshot.token_usage,
+            "model_cost": snapshot.model_cost,
+            "tool_calls": snapshot.tool_calls,
+            "resource_reads": snapshot.resource_reads,
+            "resource_bytes": snapshot.resource_bytes,
+            "wall_time": snapshot.wall_time,
+            "usage_snapshot_accuracy": success,
+            "success": success,
+        },
+    )
+
+
+def _unblock_recovery_case() -> BenchmarkRecord:
+    collector = UsageCollector(clock=_FakeClock())
+    scheduler = CooperativeScheduler(usage_collector=collector)
+    process = _running_process(
+        scheduler,
+        process_id="process-unblock-recovery",
+        agent_id="agent-unblock-recovery",
+        session_id="session-unblock-recovery",
+        budget=AgentBudget(max_token_usage=5),
+    )
+    collector.record_llm_usage(
+        process.process_id,
+        ModelUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+    )
+    first = _capture_budget_block(
+        scheduler,
+        process.process_id,
+        SchedulerSafePoint.AFTER_LLM_CALL,
+    )
+    collector.reset_process(process.process_id)
+    scheduler.unblock(process.process_id)
+    state_after_unblock = process.state.value
+    scheduler.dispatch(process.process_id)
+    collector.record_llm_usage(
+        process.process_id,
+        ModelUsage(input_tokens=1, output_tokens=1, total_tokens=2),
+    )
+    second_safe_point_ok = True
+    try:
+        scheduler.safe_point(
+            process.process_id,
+            SchedulerSafePoint.AFTER_LLM_CALL,
+        )
+    except ProcessBudgetExceeded:
+        second_safe_point_ok = False
+    snapshot = collector.snapshot(process.process_id)
+    success = (
+        first["blocked"]
+        and state_after_unblock == ProcessState.READY.value
+        and process.state is ProcessState.RUNNING
+        and second_safe_point_ok
+        and snapshot.token_usage == 2
+    )
+
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="unblock_recovery",
+        strategy="reset_usage_then_unblock_process",
+        metrics={
+            "blocked_before_recovery": bool(first["blocked"]),
+            "state_after_unblock": state_after_unblock,
+            "state_after_dispatch": process.state.value,
+            "token_usage_after_reset": snapshot.token_usage,
+            "second_safe_point_ok": second_safe_point_ok,
+            "unblock_correctness": success,
+            "success": success,
+        },
+    )
+
+
+def _boundary_isolation_records() -> list[BenchmarkRecord]:
+    return [
+        _agent_process_boundary_case(),
+        _process_session_boundary_case(),
+        _context_truth_boundary_case(),
+        _accounting_authority_boundary_case(),
+        _resource_store_authorization_boundary_case(),
+    ]
+
+
+def _agent_process_boundary_case() -> BenchmarkRecord:
+    grant = CapabilityGrant(
+        subject="agent-boundary",
+        action=RESOURCE_READ_ACTION,
+        resource_scope="artifact://boundary/**",
+    )
+    agent = Agent.create(
+        agent_id="agent-boundary",
+        session=Session("session-boundary-agent"),
+        capability_grants=(grant,),
+    )
+    process = ProcessControlBlock.create(
+        process_id="process-boundary",
+        agent=agent.control,
+    )
+    evaluator = CapabilityEvaluator(agent.control.capability_grants)
+    agent_decision = evaluator.authorize(
+        AuthorizationRequest(
+            agent_id=agent.control.agent_id,
+            action=RESOURCE_READ_ACTION,
+            resource="artifact://boundary/fact.txt",
+        )
+    )
+    process_decision = evaluator.authorize(
+        AuthorizationRequest(
+            agent_id=process.process_id,
+            action=RESOURCE_READ_ACTION,
+            resource="artifact://boundary/fact.txt",
+        )
+    )
+    success = (
+        agent.control.agent_id != process.process_id
+        and process.capability_snapshot.agent_id == agent.control.agent_id
+        and agent_decision.allowed
+        and not process_decision.allowed
+    )
+
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="agent_is_not_process",
+        strategy="capability_principal_vs_runtime_identity",
+        metrics={
+            "agent_id": agent.control.agent_id,
+            "process_id": process.process_id,
+            "capability_snapshot_agent_id": process.capability_snapshot.agent_id,
+            "agent_authorized": agent_decision.allowed,
+            "process_authorized_as_subject": process_decision.allowed,
+            "authority_leak": 0 if not process_decision.allowed else 1,
+            "object_identity_confusion": 0 if success else 1,
+            "durable_truth_mutation": 0,
+            "success": success,
+        },
+    )
+
+
+def _process_session_boundary_case() -> BenchmarkRecord:
+    session = Session("session-boundary-process")
+    agent = Agent.create(agent_id="agent-process-boundary", session=session)
+    process = ProcessControlBlock.create(
+        process_id="process-session-boundary",
+        agent=agent.control,
+    )
+    process.transition(ProcessState.READY)
+    event_count_before_process_change = len(session.events)
+    process.transition(ProcessState.RUNNING)
+    event_count_after_process_change = len(session.events)
+    process.transition(ProcessState.READY)
+    session.append(EventType.USER_MESSAGE, {"turn": 1, "content": "durable fact"})
+    state_after_session_append = process.state.value
+    success = (
+        event_count_before_process_change == 0
+        and event_count_after_process_change == 0
+        and len(session.events) == 1
+        and state_after_session_append == ProcessState.READY.value
+    )
+
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="process_is_not_session",
+        strategy="lifecycle_state_vs_durable_journal",
+        metrics={
+            "event_count_before_process_change": event_count_before_process_change,
+            "event_count_after_process_change": event_count_after_process_change,
+            "event_count_after_session_append": len(session.events),
+            "state_after_session_append": state_after_session_append,
+            "authority_leak": 0,
+            "object_identity_confusion": 0 if success else 1,
+            "durable_truth_mutation": 0
+            if event_count_after_process_change == event_count_before_process_change
+            else 1,
+            "success": success,
+        },
+    )
+
+
+def _context_truth_boundary_case() -> BenchmarkRecord:
+    session = Session("session-boundary-context")
+    session.append(EventType.USER_MESSAGE, {"turn": 1, "content": "durable fact"})
+    event_count_before_projection = len(session.events)
+    pages = ContextProjector(ApproximateTokenEstimator()).project(
+        session,
+        system_prompt="kernel policy prompt",
+    )
+    event_count_after_projection = len(session.events)
+    projected_page_count = len(pages)
+    success = (
+        event_count_before_projection == 1
+        and event_count_after_projection == event_count_before_projection
+        and projected_page_count > event_count_after_projection
+    )
+
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="context_is_not_truth",
+        strategy="projection_does_not_mutate_session",
+        metrics={
+            "event_count_before_projection": event_count_before_projection,
+            "event_count_after_projection": event_count_after_projection,
+            "projected_page_count": projected_page_count,
+            "projection_mutated_session": event_count_after_projection
+            != event_count_before_projection,
+            "authority_leak": 0,
+            "object_identity_confusion": 0 if success else 1,
+            "durable_truth_mutation": 0
+            if event_count_after_projection == event_count_before_projection
+            else 1,
+            "success": success,
+        },
+    )
+
+
+def _accounting_authority_boundary_case() -> BenchmarkRecord:
+    collector = UsageCollector(clock=_FakeClock())
+    scheduler = CooperativeScheduler(usage_collector=collector)
+    agent = _runtime_agent(
+        "agent-accounting-boundary",
+        "session-accounting-boundary",
+        budget=AgentBudget(max_token_usage=5),
+    )
+    process = scheduler.create_process(
+        process_id="process-accounting-boundary",
+        agent=agent.control,
+    )
+    scheduler.dispatch(process.process_id)
+    collector.record_llm_usage(
+        process.process_id,
+        ModelUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+    )
+    exceeded = collector.exceeded_budget(process.process_id, process.budget)
+    state_after_observation = process.state.value
+    session_event_count = len(agent.session.events)
+    success = (
+        exceeded is not None
+        and state_after_observation == ProcessState.RUNNING.value
+        and session_event_count == 0
+    )
+
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="accounting_is_not_authority",
+        strategy="usage_observation_without_scheduler_transition",
+        metrics={
+            "exceeded_limit": exceeded.limit if exceeded is not None else None,
+            "state_after_observation": state_after_observation,
+            "session_event_count": session_event_count,
+            "observation_did_not_block": state_after_observation
+            == ProcessState.RUNNING.value,
+            "authority_leak": 0,
+            "object_identity_confusion": 0 if success else 1,
+            "durable_truth_mutation": 0 if session_event_count == 0 else 1,
+            "success": success,
+        },
+    )
+
+
+def _resource_store_authorization_boundary_case() -> BenchmarkRecord:
+    owner = ResourceOwner("agent-store-boundary", "session-store-boundary")
+    with TemporaryDirectory(prefix="agentkernel-runtimebench-store-") as root:
+        store = _RecordingResourceStore(LocalResourceStore(root))
+        service = ResourceService(
+            store,
+            resource_id_factory=lambda: "res_store",
+            handle_id_factory=lambda: "hdl_store",
+        )
+        handle = service.create_artifact(
+            b"secret",
+            owner=owner,
+            media_type="text/plain",
+            encoding="utf-8",
+            source_tool_name="fixture.store",
+            source_tool_call_id="call-store",
+            source_operation_id="op-store",
+        )
+        denied = False
+        try:
+            service.read(
+                handle.uri,
+                owner=owner,
+                capability_evaluator=CapabilityEvaluator(),
+            )
+        except ResourceAccessDenied:
+            denied = True
+        resource_reads = service.metrics.resource_reads
+
+    success = denied and store.read_calls == 0 and resource_reads == 0
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case="resource_store_is_not_authorization",
+        strategy="resource_service_denies_before_payload_read",
+        metrics={
+            "authorization_denied": denied,
+            "store_stat_calls": store.stat_calls,
+            "store_read_calls": store.read_calls,
+            "resource_service_read_metrics": resource_reads,
+            "payload_read_after_denial": store.read_calls > 0,
+            "authority_leak": 0 if denied and store.read_calls == 0 else 1,
+            "object_identity_confusion": 0 if success else 1,
+            "durable_truth_mutation": 0,
+            "success": success,
+        },
+    )
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, amount: float) -> None:
+        self.now += amount
+
+
+class _RecordingResourceStore:
+    def __init__(self, inner: LocalResourceStore) -> None:
+        self._inner = inner
+        self.commit_calls = 0
+        self.stat_calls = 0
+        self.read_calls = 0
+
+    def commit(self, metadata: object, data: bytes) -> None:
+        self.commit_calls += 1
+        self._inner.commit(metadata, data)  # type: ignore[arg-type]
+
+    def stat(self, resource_id: str) -> object:
+        self.stat_calls += 1
+        return self._inner.stat(resource_id)
+
+    def read(self, resource_id: str, offset: int, limit: int) -> bytes:
+        self.read_calls += 1
+        return self._inner.read(resource_id, offset, limit)
+
+    def list_metadata(self) -> object:
+        return self._inner.list_metadata()
+
+
+def _runtime_agent(
+    agent_id: str,
+    session_id: str,
+    *,
+    budget: AgentBudget | None = None,
+) -> Agent:
+    return Agent.create(
+        agent_id=agent_id,
+        session=Session(session_id),
+        budget=budget,
+    )
+
+
+def _running_process(
+    scheduler: CooperativeScheduler,
+    *,
+    process_id: str,
+    agent_id: str,
+    session_id: str,
+    budget: AgentBudget,
+) -> ProcessControlBlock:
+    agent = _runtime_agent(agent_id, session_id, budget=budget)
+    process = scheduler.create_process(process_id=process_id, agent=agent.control)
+    scheduler.dispatch(process_id)
+    return process
+
+
+def _capture_budget_block(
+    scheduler: CooperativeScheduler,
+    process_id: str,
+    safe_point: SchedulerSafePoint,
+) -> dict[str, object]:
+    try:
+        scheduler.safe_point(process_id, safe_point)
+    except ProcessBudgetExceeded as error:
+        return {
+            "blocked": True,
+            "limit": error.exceeded.limit,
+            "usage": error.exceeded.usage,
+            "maximum": error.exceeded.maximum,
+        }
+    return {
+        "blocked": False,
+        "limit": None,
+        "usage": None,
+        "maximum": None,
+    }
+
+
+def _budget_record(
+    *,
+    case: str,
+    safe_point: SchedulerSafePoint,
+    expected_limit: str,
+    expected_maximum: int | float,
+    observed: dict[str, object],
+    process: ProcessControlBlock,
+    extra: dict[str, object] | None = None,
+) -> BenchmarkRecord:
+    usage = observed["usage"]
+    maximum = observed["maximum"]
+    success = (
+        observed["blocked"] is True
+        and observed["limit"] == expected_limit
+        and maximum == expected_maximum
+        and process.state is ProcessState.BLOCKED
+        and process.blocked_reason == f"budget_exceeded:{expected_limit}"
+    )
+    metrics = {
+        "safe_point": safe_point.value,
+        "budget_limit": expected_limit,
+        "budget_maximum": expected_maximum,
+        "observed_usage": usage,
+        "budget_overshoot": _number_overshoot(usage, maximum),
+        "exceeded_limit": observed["limit"],
+        "blocked": bool(observed["blocked"]),
+        "process_state": process.state.value,
+        "blocked_reason": process.blocked_reason,
+        "success": success,
+    }
+    if extra is not None:
+        metrics.update(extra)
+    return BenchmarkRecord(
+        benchmark="runtimebench_v0.7",
+        case=case,
+        strategy="scheduler_budget_safe_point",
+        metrics=metrics,
+    )
+
+
+def _overshoot(record: BenchmarkRecord) -> float:
+    return _number_overshoot(
+        _metric(record, "observed_usage"),
+        _metric(record, "budget_maximum"),
+    )
+
+
+def _number_overshoot(usage: object, maximum: object) -> float:
+    if not isinstance(usage, (int, float)) or not isinstance(maximum, (int, float)):
+        return 0.0
+    return round(max(0.0, float(usage) - float(maximum)), 4)
 
 
 def _find(

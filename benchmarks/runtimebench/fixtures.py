@@ -56,3 +56,38 @@ def capability_attack_fixture() -> FixtureSpec:
             ],
         },
     )
+
+
+def resource_governance_fixture() -> FixtureSpec:
+    return FixtureSpec(
+        fixture_id="process_resource_budget_pressure",
+        parameters={
+            "budget_cases": [
+                "token_budget",
+                "tool_budget",
+                "resource_budget",
+                "wall_time_budget",
+                "unblock_recovery",
+            ],
+            "safe_points": [
+                "llm_call.after",
+                "tool_call.after",
+                "step_start.before",
+            ],
+        },
+    )
+
+
+def boundary_isolation_fixture() -> FixtureSpec:
+    return FixtureSpec(
+        fixture_id="kernel_object_boundary_invariants",
+        parameters={
+            "invariants": [
+                "agent_is_not_process",
+                "process_is_not_session",
+                "context_is_not_truth",
+                "accounting_is_not_authority",
+                "resource_store_is_not_authorization",
+            ],
+        },
+    )
