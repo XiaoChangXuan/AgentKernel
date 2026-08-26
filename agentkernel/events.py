@@ -33,6 +33,7 @@ class EventType(StrEnum):
     CONTEXT_COMPACTION_COMPLETED = "context/compaction-completed"
     CONTEXT_COMPACTION_ABORTED = "context/compaction-aborted"
     AGENT_CREATED = "agent/created"
+    PROCESS_CREATED = "process/created"
     STEP_END = "step/end"
     TURN_END = "turn/end"
 

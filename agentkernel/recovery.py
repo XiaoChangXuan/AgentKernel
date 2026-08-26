@@ -138,6 +138,8 @@ def analyze_recovery(
     completed_compaction_ids: list[str] = []
     agent_creation_facts: dict[str, dict[str, JsonValue]] = {}
     agent_creation_by_agent: dict[str, str] = {}
+    process_creation_facts: dict[str, dict[str, JsonValue]] = {}
+    process_creation_by_process: dict[str, str] = {}
 
     def fail(message: str) -> NoReturn:
         analysis = RecoveryAnalysis(
@@ -516,6 +518,15 @@ def analyze_recovery(
             )
             continue
 
+        if event.type is EventType.PROCESS_CREATED:
+            _validate_process_created_event(
+                data,
+                process_creation_facts,
+                process_creation_by_process,
+                fail,
+            )
+            continue
+
         if event.type is EventType.STEP_END:
             _require_step(data, active_turn, active_step, fail)
             if pending_calls:
@@ -764,6 +775,51 @@ def _validate_agent_created_event(
         )
     agent_creation_facts[creation_id] = snapshot
     agent_creation_by_agent[agent_id] = creation_id
+
+
+def _validate_process_created_event(
+    data: Mapping[str, JsonValue],
+    process_creation_facts: dict[str, dict[str, JsonValue]],
+    process_creation_by_process: dict[str, str],
+    fail: Callable[[str], NoReturn],
+) -> None:
+    expected = {
+        "process_id",
+        "agent_id",
+        "session_id",
+        "parent_process_id",
+        "creation_id",
+    }
+    if set(data) != expected:
+        fail(
+            "process/created must contain exactly process_id, agent_id, "
+            "session_id, parent_process_id, creation_id"
+        )
+    creation_id = _non_empty_string(data, "creation_id", fail)
+    process_id = _non_empty_string(data, "process_id", fail)
+    _non_empty_string(data, "agent_id", fail)
+    _non_empty_string(data, "session_id", fail)
+    parent_process_id = data.get("parent_process_id")
+    if parent_process_id is not None and (
+        not isinstance(parent_process_id, str) or not parent_process_id
+    ):
+        fail("process/created parent_process_id must be null or a non-empty string")
+    if parent_process_id == process_id:
+        fail("process/created cannot make a process its own parent")
+    snapshot = copy.deepcopy(dict(data))
+    existing_by_creation = process_creation_facts.get(creation_id)
+    if existing_by_creation is not None:
+        if existing_by_creation != snapshot:
+            fail(f"conflicting process/created creation_id: {creation_id}")
+        return
+    existing_creation = process_creation_by_process.get(process_id)
+    if existing_creation is not None:
+        fail(
+            f"process {process_id!r} has multiple creation facts: "
+            f"{existing_creation}, {creation_id}"
+        )
+    process_creation_facts[creation_id] = snapshot
+    process_creation_by_process[process_id] = creation_id
 
 
 def _non_empty_string(
