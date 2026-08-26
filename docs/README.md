@@ -37,6 +37,8 @@ necessarily current authoritative specifications.
 - [V0.6 Capability Final Review](architecture/V0.6_CAPABILITY_FINAL_REVIEW.md)
 - [V0.7 Process Architecture Review](architecture/V0.7_PROCESS_ARCHITECTURE_REVIEW.md)
 - [V0.7 Runtime Architecture Review](architecture/V0.7_RUNTIME_ARCHITECTURE_REVIEW.md)
+- [V0.8 Multi-Agent Architecture Review](architecture/V0.8_MULTI_AGENT_ARCHITECTURE_REVIEW.md)
+- [V0.8 Multi-Agent Design Freeze](architecture/V0.8_MULTI_AGENT_DESIGN_FREEZE.md)
 
 ## Evaluation
 
