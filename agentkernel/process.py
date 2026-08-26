@@ -238,6 +238,8 @@ class ProcessControlBlock:
             raise ValueError("process_id, agent_id, and session_id must not be empty")
         if self.parent_process_id == "":
             raise ValueError("parent_process_id must not be empty")
+        if self.parent_process_id == self.process_id:
+            raise ValueError("process cannot be its own parent")
 
     def _validate_lifecycle_fields(self, state: ProcessState) -> None:
         self._validate_target_fields(

@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from enum import StrEnum
+import uuid
 
 from .accounting import UsageCollector, UsageLimitExceeded
-from .agent import AgentControlBlock
+from .agent import AgentControlBlock, AgentRegistry
+from .events import EventType, SessionEvent
 from .process import ProcessControlBlock, ProcessState
+from .protocol import JsonValue
+from .session import Session
 
 
 class SchedulerError(RuntimeError):
@@ -20,6 +26,22 @@ class ProcessAlreadyExists(SchedulerError):
 
 class ProcessNotFound(SchedulerError):
     """Raised when a process id is not present in the process table."""
+
+
+class InvalidProcessParent(SchedulerError):
+    """Raised when a process parent relation violates Process Tree rules."""
+
+
+class ProcessTreeError(SchedulerError):
+    """Raised when the Process Tree cannot satisfy a runtime invariant."""
+
+
+class ProcessRegistryCorruptionError(ProcessTreeError):
+    """Raised when durable Process creation facts cannot be replayed safely."""
+
+
+class ProcessSessionConflict(SchedulerError):
+    """Raised when dispatch would violate single-writer Session ownership."""
 
 
 class NoRunnableProcess(SchedulerError):
@@ -80,11 +102,22 @@ class SchedulerSafePoint(StrEnum):
     AFTER_DURABLE_DISPATCH = "durable_dispatch.after"
 
 
+@dataclass(frozen=True, slots=True)
+class _ProcessCreationFact:
+    process_id: str
+    agent_id: str
+    session_id: str
+    parent_process_id: str | None
+    creation_id: str
+
+
 class ProcessManager:
     """Kernel-owned live process table."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, agent_registry: AgentRegistry | None = None) -> None:
         self._processes: dict[str, ProcessControlBlock] = {}
+        self._children: dict[str, list[str]] = {}
+        self._agent_registry = agent_registry
 
     def create_process(
         self,
@@ -94,6 +127,8 @@ class ProcessManager:
         parent_process_id: str | None = None,
         priority: int = 0,
         admit: bool = True,
+        record_session: Session | None = None,
+        creation_id: str | None = None,
     ) -> ProcessControlBlock:
         """Create and optionally admit a process into READY state."""
 
@@ -103,19 +138,66 @@ class ProcessManager:
             parent_process_id=parent_process_id,
             priority=priority,
         )
-        self.register(process)
+        self._validate_new_process(process)
+        if record_session is not None:
+            self._append_process_created(record_session, process, creation_id)
+        self._insert(process)
         if admit:
             process.transition(ProcessState.READY)
         return process
 
+    def create_child_process(
+        self,
+        *,
+        parent_process_id: str,
+        process_id: str,
+        agent: AgentControlBlock,
+        priority: int = 0,
+        admit: bool = True,
+        record_session: Session | None = None,
+        creation_id: str | None = None,
+    ) -> ProcessControlBlock:
+        """Create a child process supervised by an existing parent process."""
+
+        if not parent_process_id:
+            raise InvalidProcessParent(
+                "child process requires a non-empty parent_process_id"
+            )
+        return self.create_process(
+            process_id=process_id,
+            agent=agent,
+            parent_process_id=parent_process_id,
+            priority=priority,
+            admit=admit,
+            record_session=record_session,
+            creation_id=creation_id,
+        )
+
     def register(self, process: ProcessControlBlock) -> None:
         """Add a ProcessControlBlock to the live process table."""
 
-        if process.process_id in self._processes:
-            raise ProcessAlreadyExists(
-                f"process already exists: {process.process_id}"
+        self._validate_new_process(process)
+        self._insert(process)
+
+    def record_process_created(
+        self,
+        session: Session,
+        process: ProcessControlBlock,
+        *,
+        creation_id: str | None = None,
+    ) -> SessionEvent:
+        """Append one durable Process identity creation fact."""
+
+        registered = self.get(process.process_id)
+        if registered.agent_id != process.agent_id:
+            raise ProcessTreeError("registered process agent_id does not match")
+        if registered.session_id != process.session_id:
+            raise ProcessTreeError("registered process session_id does not match")
+        if registered.parent_process_id != process.parent_process_id:
+            raise InvalidProcessParent(
+                "registered process parent_process_id does not match"
             )
-        self._processes[process.process_id] = process
+        return self._append_process_created(session, registered, creation_id)
 
     def get(self, process_id: str) -> ProcessControlBlock:
         """Return a process by id."""
@@ -135,6 +217,72 @@ class ProcessManager:
 
         return tuple(self._processes.values())
 
+    def parent_of(self, process_id: str) -> str | None:
+        """Return the parent process id, or None for a root process."""
+
+        return self.get(process_id).parent_process_id
+
+    def children_of(self, process_id: str) -> tuple[str, ...]:
+        """Return direct child process ids in creation order."""
+
+        self.get(process_id)
+        return tuple(self._children.get(process_id, ()))
+
+    def root_of(self, process_id: str) -> str:
+        """Return the root process id for the process tree."""
+
+        return self.lineage(process_id)[0]
+
+    def lineage(self, process_id: str) -> tuple[str, ...]:
+        """Return process ancestry ordered from root to requested process."""
+
+        self.get(process_id)
+        reversed_lineage: list[str] = []
+        current: str | None = process_id
+        seen: set[str] = set()
+        while current is not None:
+            if current in seen:
+                raise ProcessTreeError(f"process tree cycle detected at {current}")
+            seen.add(current)
+            process = self.get(current)
+            reversed_lineage.append(current)
+            current = process.parent_process_id
+        return tuple(reversed(reversed_lineage))
+
+    def descendants_of(self, process_id: str) -> tuple[str, ...]:
+        """Return all descendant process ids in deterministic creation order."""
+
+        self.get(process_id)
+        descendants: list[str] = []
+        pending = list(reversed(self._children.get(process_id, ())))
+        while pending:
+            child_id = pending.pop()
+            descendants.append(child_id)
+            pending.extend(reversed(self._children.get(child_id, ())))
+        return tuple(descendants)
+
+    def depth(self, process_id: str) -> int:
+        """Return process tree depth where roots have depth zero."""
+
+        return len(self.lineage(process_id)) - 1
+
+    def exited_children_of(self, process_id: str) -> tuple[ProcessControlBlock, ...]:
+        """Return direct child processes that have reached EXITED."""
+
+        return tuple(
+            self.get(child_id)
+            for child_id in self.children_of(process_id)
+            if self.get(child_id).state is ProcessState.EXITED
+        )
+
+    def child_exit_statuses(self, process_id: str) -> dict[str, str | None]:
+        """Return direct exited child ids mapped to their exit status."""
+
+        return {
+            child.process_id: child.exit_status
+            for child in self.exited_children_of(process_id)
+        }
+
     def delete_exited_process(self, process_id: str) -> ProcessControlBlock:
         """Remove one exited process from the process table."""
 
@@ -143,17 +291,245 @@ class ProcessManager:
             raise RuntimeError(
                 f"cannot delete non-exited process {process_id}: {process.state}"
             )
-        return self._processes.pop(process_id)
+        if self._children.get(process_id):
+            raise RuntimeError(f"cannot delete process {process_id} with children")
+        removed = self._processes.pop(process_id)
+        self._children.pop(process_id, None)
+        if process.parent_process_id is not None:
+            siblings = self._children.get(process.parent_process_id)
+            if siblings is not None:
+                self._children[process.parent_process_id] = [
+                    child_id for child_id in siblings if child_id != process_id
+                ]
+        return removed
 
     def delete_exited_processes(self) -> tuple[ProcessControlBlock, ...]:
         """Remove all exited processes from the process table."""
 
         deleted: list[ProcessControlBlock] = []
-        for process_id, process in list(self._processes.items()):
-            if process.state is ProcessState.EXITED:
-                deleted.append(process)
-                del self._processes[process_id]
+        while True:
+            progressed = False
+            for process_id, process in list(self._processes.items()):
+                if process.state is not ProcessState.EXITED:
+                    continue
+                if self._children.get(process_id):
+                    continue
+                deleted.append(self.delete_exited_process(process_id))
+                progressed = True
+            if not progressed:
+                break
         return tuple(deleted)
+
+    @classmethod
+    def reconstruct(
+        cls,
+        sessions: Iterable[Session],
+        *,
+        agent_registry: AgentRegistry,
+    ) -> "ProcessManager":
+        """Rebuild Process Tree metadata from durable process/created facts."""
+
+        facts = _process_creation_facts_from_sessions(sessions)
+        _validate_reconstructed_process_facts(facts, agent_registry)
+        manager = cls(agent_registry=agent_registry)
+        remaining = dict(facts)
+        while remaining:
+            progressed = False
+            for process_id, fact in list(remaining.items()):
+                if (
+                    fact.parent_process_id is not None
+                    and fact.parent_process_id not in manager._processes
+                ):
+                    continue
+                process = ProcessControlBlock.create(
+                    process_id=process_id,
+                    agent=agent_registry.get(fact.agent_id),
+                    parent_process_id=fact.parent_process_id,
+                )
+                manager.register(process)
+                del remaining[process_id]
+                progressed = True
+            if not progressed:
+                unresolved = ", ".join(sorted(remaining))
+                raise ProcessRegistryCorruptionError(
+                    "process tree contains unresolved parent relation or cycle: "
+                    f"{unresolved}"
+                )
+        return manager
+
+    @classmethod
+    def from_sessions(
+        cls,
+        sessions: Iterable[Session],
+        *,
+        agent_registry: AgentRegistry,
+    ) -> "ProcessManager":
+        """Compatibility alias for reconstruct()."""
+
+        return cls.reconstruct(sessions, agent_registry=agent_registry)
+
+    def _validate_new_process(self, process: ProcessControlBlock) -> None:
+        if process.process_id in self._processes:
+            raise ProcessAlreadyExists(
+                f"process already exists: {process.process_id}"
+            )
+        if process.parent_process_id is not None:
+            if process.parent_process_id == process.process_id:
+                raise InvalidProcessParent("process cannot be its own parent")
+            if process.parent_process_id not in self._processes:
+                raise InvalidProcessParent(
+                    f"parent process not found: {process.parent_process_id}"
+                )
+        self._validate_agent_ownership(process)
+
+    def _validate_agent_ownership(self, process: ProcessControlBlock) -> None:
+        if self._agent_registry is None:
+            return
+        if not self._agent_registry.contains(process.agent_id):
+            raise ProcessTreeError(f"owning agent not found: {process.agent_id}")
+        agent = self._agent_registry.get(process.agent_id)
+        if agent.session_id != process.session_id:
+            raise ProcessTreeError(
+                "process session_id does not match owning agent primary session"
+            )
+
+    def _insert(self, process: ProcessControlBlock) -> None:
+        self._processes[process.process_id] = process
+        self._children.setdefault(process.process_id, [])
+        if process.parent_process_id is not None:
+            self._children.setdefault(process.parent_process_id, []).append(
+                process.process_id
+            )
+
+    @staticmethod
+    def _append_process_created(
+        session: Session,
+        process: ProcessControlBlock,
+        creation_id: str | None,
+    ) -> SessionEvent:
+        if session.session_id != process.session_id:
+            raise ProcessTreeError(
+                "process/created must be written to the owning Agent session"
+            )
+        creation = creation_id or f"process_create_{uuid.uuid4().hex}"
+        if not creation:
+            raise ValueError("creation_id must not be empty")
+        return session.append(
+            EventType.PROCESS_CREATED,
+            {
+                "process_id": process.process_id,
+                "agent_id": process.agent_id,
+                "session_id": process.session_id,
+                "parent_process_id": process.parent_process_id,
+                "creation_id": creation,
+            },
+        )
+
+
+def _process_creation_facts_from_sessions(
+    sessions: Iterable[Session],
+) -> dict[str, _ProcessCreationFact]:
+    facts: dict[str, _ProcessCreationFact] = {}
+    facts_by_creation_id: dict[str, _ProcessCreationFact] = {}
+    for session in sessions:
+        for event in session.events:
+            if event.type is not EventType.PROCESS_CREATED:
+                continue
+            fact = _process_creation_fact_from_event(event.data)
+            existing_creation = facts_by_creation_id.get(fact.creation_id)
+            if existing_creation is not None:
+                if existing_creation != fact:
+                    raise ProcessRegistryCorruptionError(
+                        f"conflicting process creation_id: {fact.creation_id}"
+                    )
+                continue
+            existing_process = facts.get(fact.process_id)
+            if existing_process is not None:
+                raise ProcessRegistryCorruptionError(
+                    f"process {fact.process_id!r} has multiple creation facts"
+                )
+            facts_by_creation_id[fact.creation_id] = fact
+            facts[fact.process_id] = fact
+    return facts
+
+
+def _process_creation_fact_from_event(
+    data: Mapping[str, JsonValue],
+) -> _ProcessCreationFact:
+    expected = {
+        "process_id",
+        "agent_id",
+        "session_id",
+        "parent_process_id",
+        "creation_id",
+    }
+    if set(data) != expected:
+        raise ProcessRegistryCorruptionError(
+            "process/created must contain exactly process_id, agent_id, "
+            "session_id, parent_process_id, creation_id"
+        )
+    process_id = _required_string(data, "process_id")
+    agent_id = _required_string(data, "agent_id")
+    session_id = _required_string(data, "session_id")
+    creation_id = _required_string(data, "creation_id")
+    parent_process_id = data.get("parent_process_id")
+    if parent_process_id is not None and (
+        not isinstance(parent_process_id, str) or not parent_process_id
+    ):
+        raise ProcessRegistryCorruptionError(
+            "process/created parent_process_id must be null or a non-empty string"
+        )
+    if parent_process_id == process_id:
+        raise ProcessRegistryCorruptionError(
+            "process/created cannot make a process its own parent"
+        )
+    return _ProcessCreationFact(
+        process_id=process_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        parent_process_id=parent_process_id,
+        creation_id=creation_id,
+    )
+
+
+def _validate_reconstructed_process_facts(
+    facts: Mapping[str, _ProcessCreationFact],
+    agent_registry: AgentRegistry,
+) -> None:
+    for process_id, fact in facts.items():
+        if not agent_registry.contains(fact.agent_id):
+            raise ProcessRegistryCorruptionError(
+                f"process {process_id!r} references missing agent {fact.agent_id!r}"
+            )
+        agent = agent_registry.get(fact.agent_id)
+        if agent.session_id != fact.session_id:
+            raise ProcessRegistryCorruptionError(
+                f"process {process_id!r} session does not match owning agent"
+            )
+        if fact.parent_process_id is not None and fact.parent_process_id not in facts:
+            raise ProcessRegistryCorruptionError(
+                f"process {process_id!r} references missing parent "
+                f"{fact.parent_process_id!r}"
+            )
+    for process_id in facts:
+        seen: set[str] = set()
+        current: str | None = process_id
+        while current is not None:
+            if current in seen:
+                raise ProcessRegistryCorruptionError(
+                    f"process tree cycle detected at {current}"
+                )
+            seen.add(current)
+            current = facts[current].parent_process_id
+
+
+def _required_string(data: Mapping[str, JsonValue], name: str) -> str:
+    value = data.get(name)
+    if not isinstance(value, str) or not value:
+        raise ProcessRegistryCorruptionError(
+            f"process/created {name} must be a non-empty string"
+        )
+    return value
 
 
 class CooperativeScheduler:
@@ -253,7 +629,7 @@ class CooperativeScheduler:
         """Transition one READY process to RUNNING."""
 
         process = (
-            self.schedule_next()
+            self._next_dispatchable_process()
             if process_id is None
             else self._manager.get(process_id)
         )
@@ -261,6 +637,7 @@ class CooperativeScheduler:
             raise RuntimeError(
                 f"only READY processes can be dispatched, got {process.state}"
             )
+        self._ensure_session_writer_available(process)
         self._remove_from_ready(process.process_id)
         self._waiting.pop(process.process_id, None)
         self._blocked.pop(process.process_id, None)
@@ -477,3 +854,41 @@ class CooperativeScheduler:
         process_id = ready.pop(best_index)
         self._ready = deque(ready)
         return process_id
+
+    def _next_dispatchable_process(self) -> ProcessControlBlock:
+        self._prune_ready_queue()
+        if not self._ready:
+            raise NoRunnableProcess("no READY process is available")
+
+        ready = list(self._ready)
+        ordered = sorted(
+            enumerate(ready),
+            key=lambda item: (-self._manager.get(item[1]).priority, item[0]),
+        )
+        first_conflict: ProcessSessionConflict | None = None
+        for _index, process_id in ordered:
+            process = self._manager.get(process_id)
+            try:
+                self._ensure_session_writer_available(process)
+            except ProcessSessionConflict as error:
+                if first_conflict is None:
+                    first_conflict = error
+                continue
+            return process
+        assert first_conflict is not None
+        raise first_conflict
+
+    def _ensure_session_writer_available(
+        self,
+        process: ProcessControlBlock,
+    ) -> None:
+        for other in self._manager.list_processes():
+            if other.process_id == process.process_id:
+                continue
+            if other.session_id != process.session_id:
+                continue
+            if other.state is ProcessState.RUNNING:
+                raise ProcessSessionConflict(
+                    "dispatch would create concurrent writers for session "
+                    f"{process.session_id!r}: {other.process_id!r} is RUNNING"
+                )

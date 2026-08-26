@@ -109,6 +109,7 @@ from .protocol import (
 from .process import CapabilitySnapshot, ProcessControlBlock, ProcessState
 from .scheduler import (
     CooperativeScheduler,
+    InvalidProcessParent,
     NoRunnableProcess,
     ProcessAlreadyExists,
     ProcessBudgetExceeded,
@@ -116,6 +117,9 @@ from .scheduler import (
     ProcessManager,
     ProcessNotFound,
     ProcessPaused,
+    ProcessRegistryCorruptionError,
+    ProcessSessionConflict,
+    ProcessTreeError,
     SchedulerError,
     SchedulerSafePoint,
 )
@@ -221,6 +225,7 @@ __all__ = [
     "HookManager",
     "HookPoint",
     "InvalidAgentParent",
+    "InvalidProcessParent",
     "InMemorySessionPersistence",
     "JsonlSessionPersistence",
     "LLMService",
@@ -243,7 +248,10 @@ __all__ = [
     "ProcessManager",
     "ProcessNotFound",
     "ProcessPaused",
+    "ProcessRegistryCorruptionError",
+    "ProcessSessionConflict",
     "ProcessState",
+    "ProcessTreeError",
     "ProcessUsageSnapshot",
     "OperationRecoveryClassification",
     "PersistedSession",
