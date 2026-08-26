@@ -27,6 +27,7 @@ class EventType(StrEnum):
     AUTHORIZATION_GRANTED = "authorization/granted"
     AUTHORIZATION_DENIED = "authorization/denied"
     CAPABILITY_DELEGATED = "capability/delegated"
+    RESOURCE_SHARED = "resource/shared"
     IPC_SEND = "ipc/send"
     IPC_RECEIVE = "ipc/receive"
     IPC_ACK = "ipc/ack"
