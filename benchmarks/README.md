@@ -19,7 +19,7 @@ benchmarks/results/runtimebench_v0.7.json
 Canonical human-readable interpretation:
 
 ```text
-docs/V0.7_RUNTIMEBENCH_REVIEW.md
+docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md
 ```
 
 ## Current V0.7 Evidence

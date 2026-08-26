@@ -108,7 +108,7 @@ benchmarks/results/runtimebench_v0.7.json
 The canonical human-readable evidence review is:
 
 ```text
-docs/V0.7_RUNTIMEBENCH_REVIEW.md
+docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md
 ```
 
 Current implemented RuntimeBench families:
@@ -172,8 +172,8 @@ Start with:
 
 - [docs/README.md](docs/README.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/V0.7_RELEASE.md](docs/V0.7_RELEASE.md)
-- [docs/V0.7_RUNTIMEBENCH_REVIEW.md](docs/V0.7_RUNTIMEBENCH_REVIEW.md)
+- [docs/releases/V0.7_RELEASE.md](docs/releases/V0.7_RELEASE.md)
+- [docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md](docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md)
 
 ## Supported Claims
 

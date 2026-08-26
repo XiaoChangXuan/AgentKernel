@@ -12,7 +12,7 @@ benchmarks/results/runtimebench_v0.7.json
 Human-readable evidence review:
 
 ```text
-docs/V0.7_RUNTIMEBENCH_REVIEW.md
+docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md
 ```
 
 Canonical command:

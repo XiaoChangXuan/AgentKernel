@@ -1,6 +1,6 @@
 # AgentKernel V0.5 architecture
 
-This document describes implemented behavior. The roadmap and long-term design constraints live in [`IMPLEMENTATION_BLUEPRINT.md`](IMPLEMENTATION_BLUEPRINT.md).
+This document describes implemented behavior. The roadmap and long-term design constraints live in [`research/IMPLEMENTATION_BLUEPRINT.md`](research/IMPLEMENTATION_BLUEPRINT.md).
 
 ## Boundary
 
@@ -73,7 +73,7 @@ repeat:
 
 V0.5 externalizes selected oversized Tool Results before mutation commit and before `tool/result` append. `ResourceService` generates `ResourceId`/`HandleId`, commits bytes through `ResourceStore`, checks exact agent/session ownership, validates the only supported `artifact://` URI and byte range, and returns a safe `ResourceHandle`. `LocalResourceStore` atomically publishes durable payload+metadata directories. The model sees no store path and can retrieve only a bounded range through registered `resource_stat` / `resource_read` ToolDefinitions.
 
-Session remains the semantic source of truth for the Tool execution and its handle; ResourceStore is the byte source of truth for externalized content. Context VM projects only the preview+handle already present in Session and never reads or mutates resource bytes. A committed resource absent from a `tool/result` is a retained, identifiable orphan (even if an interrupted mutation WAL mentions it); V0.5 deliberately defers automatic GC. See [`V0.5_RESOURCE_ARCHITECTURE.md`](V0.5_RESOURCE_ARCHITECTURE.md).
+Session remains the semantic source of truth for the Tool execution and its handle; ResourceStore is the byte source of truth for externalized content. Context VM projects only the preview+handle already present in Session and never reads or mutates resource bytes. A committed resource absent from a `tool/result` is a retained, identifiable orphan (even if an interrupted mutation WAL mentions it); V0.5 deliberately defers automatic GC. See [`architecture/V0.5_RESOURCE_ARCHITECTURE.md`](architecture/V0.5_RESOURCE_ARCHITECTURE.md).
 
 ## Context VM
 
