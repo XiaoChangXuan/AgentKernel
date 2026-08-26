@@ -374,6 +374,11 @@ class AgentRegistry:
 
         return agent_id in self._agents
 
+    def list_agents(self) -> tuple[AgentControlBlock, ...]:
+        """Return a stable snapshot of registered Agents in creation order."""
+
+        return tuple(self._agents.values())
+
     def parent_of(self, agent_id: str) -> str | None:
         """Return the parent Agent id, or None for a root Agent."""
 

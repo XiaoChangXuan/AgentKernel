@@ -10,6 +10,7 @@ from enum import StrEnum
 from .agent import AgentControlBlock, AgentRegistry, AgentRegistryError
 from .accounting import HostBudget
 from .capabilities import CapabilityGrant
+from .events import EventType
 from .ipc import IPCError, IPCPersistence, KernelIPC
 from .protocol import JsonValue
 from .recovery import (
@@ -118,7 +119,12 @@ class IntegratedRecoveryCoordinator:
             _validate_process_ownership(process_manager, agent_registry, session_by_id)
 
             resource_shares = None
-            if resource_store is not None:
+            if resource_store is None:
+                if _has_resource_share_facts(session_tuple):
+                    raise MultiAgentRecoveryCorruptionError(
+                        "ResourceStore is required to replay resource/shared facts"
+                    )
+            else:
                 resource_shares = ResourceShareRegistry.reconstruct(
                     session_tuple,
                     agent_registry=agent_registry,
@@ -131,7 +137,12 @@ class IntegratedRecoveryCoordinator:
             )
 
             ipc = None
-            if ipc_persistence is not None:
+            if ipc_persistence is None:
+                if _has_ipc_audit_facts(session_tuple):
+                    raise MultiAgentRecoveryCorruptionError(
+                        "IPCPersistence is required to replay IPC audit facts"
+                    )
+            else:
                 ipc = KernelIPC.reconstruct(
                     agent_registry=agent_registry,
                     process_manager=process_manager,
@@ -150,6 +161,10 @@ class IntegratedRecoveryCoordinator:
         ) as error:
             raise MultiAgentRecoveryCorruptionError(str(error)) from error
 
+        _validate_durable_authorization_principals(
+            analyses,
+            agent_registry,
+        )
         obligations = _durable_obligations(analyses)
         dispositions = _process_dispositions(
             process_manager,
@@ -274,6 +289,28 @@ def _validate_process_ownership(
                 f"Process {process.process_id!r} references missing parent "
                 f"{process.parent_process_id!r}"
             )
+
+
+def _validate_durable_authorization_principals(
+    analyses: Mapping[str, RecoveryAnalysis],
+    agent_registry: AgentRegistry,
+) -> None:
+    owner_by_session = {
+        agent.session_id: agent.agent_id
+        for agent in _registry_agents(agent_registry)
+    }
+    for session_id, analysis in sorted(analyses.items()):
+        owner_agent_id = owner_by_session.get(session_id)
+        for operation in analysis.durable_operations:
+            if operation.authorization is None:
+                continue
+            authorized_agent_id = operation.authorization.get("agent_id")
+            if authorized_agent_id != owner_agent_id:
+                raise MultiAgentRecoveryCorruptionError(
+                    "durable operation authorization agent_id does not match "
+                    "owning Session Agent: "
+                    f"{operation.operation_id!r} in {session_id!r}"
+                )
 
 
 def _validate_ipc_runtime(
@@ -402,6 +439,28 @@ def _warnings_from_analyses(
     return tuple(warnings)
 
 
+def _has_resource_share_facts(sessions: tuple[Session, ...]) -> bool:
+    return _has_session_event_type(sessions, {EventType.RESOURCE_SHARED})
+
+
+def _has_ipc_audit_facts(sessions: tuple[Session, ...]) -> bool:
+    return _has_session_event_type(
+        sessions,
+        {EventType.IPC_SEND, EventType.IPC_RECEIVE, EventType.IPC_ACK},
+    )
+
+
+def _has_session_event_type(
+    sessions: tuple[Session, ...],
+    event_types: frozenset[EventType] | set[EventType],
+) -> bool:
+    return any(
+        event.type in event_types
+        for session in sessions
+        for event in session.events
+    )
+
+
 def _sessions_by_agent(
     agent_registry: AgentRegistry,
     session_by_id: Mapping[str, Session],
@@ -413,12 +472,7 @@ def _sessions_by_agent(
 
 
 def _registry_agents(agent_registry: AgentRegistry) -> tuple[AgentControlBlock, ...]:
-    agents = getattr(agent_registry, "_agents", None)
-    if not isinstance(agents, dict):
-        raise MultiAgentRecoveryCorruptionError(
-            "AgentRegistry does not expose kernel agent table"
-        )
-    return tuple(agents[agent_id] for agent_id in sorted(agents))
+    return agent_registry.list_agents()
 
 
 def _require_agent(agent_registry: AgentRegistry, agent_id: str) -> AgentControlBlock:
