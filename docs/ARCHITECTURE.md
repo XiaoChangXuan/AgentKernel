@@ -1,432 +1,294 @@
-# AgentKernel V0.5 architecture
+# AgentKernel V0.8 Architecture
 
-This document describes implemented behavior. The roadmap and long-term design constraints live in [`research/IMPLEMENTATION_BLUEPRINT.md`](research/IMPLEMENTATION_BLUEPRINT.md).
+This document describes the current implemented architecture at the V0.8 alpha
+release candidate. Historical architecture notes remain under
+`docs/architecture/`, `docs/implementation/`, and `docs/research/`.
 
 ## Boundary
 
-AgentKernel V0.5 is a single-process, single-agent mechanism layer with an optionally durable Session log, a durable protocol for one Tool side-effect operation, pressure-driven management of each model request's physical Context working set, and a minimal durable Artifact Resource layer. The trusted code owns lifecycle state, capabilities, budgets, Session semantics, Context projection/reclamation boundaries, Resource identity/authorization/range validation, complete-request accounting, model request assembly, operation identity, WAL transitions, and Tool dispatch. Storage, ResourceStore, Model, Tool, token-estimation, Context-policy, externalization-policy, and reclaim-policy implementations remain replaceable seams; they do not own Kernel truth.
-
-## Modules
-
-| Module | Responsibility |
-|---|---|
-| `protocol.py` | Provider-neutral `Message`, `ToolCall`, `ToolResult`, `ToolSchema`, `ModelRequest`, and `ModelResponse` values. |
-| `events.py` | Closed event vocabulary, including Tool WAL and durable Summary lifecycle events, and immutable `SessionEvent` envelope. |
-| `session.py` | Append-only semantic log, persistence coordination, load, and `derive_messages()` projection. |
-| `persistence.py` | Versioned header/record codec, storage errors, `SessionPersistence`, InMemory, and JSONL. |
-| `recovery.py` | Pure sequence/lifecycle/WAL validation and operation-level `RecoveryAnalysis`. |
-| `context/` | Context Pages, projection, token estimation, budget, pressure/reclaim policy, deterministic pruning, durable compaction, working-set selection, Tool atomicity, and metrics. |
-| `llm.py` | Abstract `LLMService.generate()` and deterministic `ScriptedLLM`. |
-| `tool_effects.py` | Host-only effect classifications and reconciliation values. |
-| `tools.py` | Runtime definitions, schema projection, capability enforcement, timeout, handler invocation, and failure normalization. |
-| `durable_tools.py` | Mutation prepare/dispatch/commit protocol, stable operation IDs, explicit retry, and reconciliation. |
-| `resources/` | Artifact identity/metadata/handle projection, ResourceStore and local driver, owner/range validation, result externalization policy, metrics, and stat/read tools. |
-| `prompt.py` | Fresh system-prompt and authorized-tool projection for each step. |
-| `agent.py` | AgentControlBlock identities, states, immutable capability sets, bounding invariant, and budgets. |
-| `hooks.py` | Ordered notification seam for `before_step`, `before_tool`, and `after_tool`. |
-| `loop.py` | Turn and Step orchestration only. |
-| `providers/openai_compatible.py` | Non-streaming OpenAI-compatible Chat Completions wire translation and HTTP transport. |
-
-## Turn data flow
+AgentKernel is a trusted mechanism layer for tool-using LLM agents.
 
 ```text
-append turn/start
-append user/message
-
-repeat:
-  append step/start
-  notify before_step
-  PromptService.assemble()
-  ContextManager.prepare_working_set()
-    Session events → Context Pages
-    ContextPolicy → temperature / priority / pin
-    pressure + ReclaimPolicy → evict / prune / compact
-    budget + dependencies → Working Set
-    causal projection → messages
-  LLMService.generate(ModelRequest)
-  append assistant/message
-
-  if tool calls:
-    for each call, sequentially:
-      enforce tool-call budget
-      append tool/call
-      notify before_tool
-      DurableToolExecutor.execute()
-        resolve + capability check
-        for mutation: prepare + flush, dispatch + flush
-        invoke Tool handler
-        optional ToolResultProcessor: durable Resource commit → preview + handle
-        for mutation: commit/abort + flush
-      append tool/result
-      notify after_tool
-    append step/end(tool_calls)
-    continue
-
-  append step/end(completed)
-  append turn/end(completed)
-  return final text
+LLM / host policy
+    |
+    v
+Agent Loop
+    |
+    v
+Kernel Services
+    |
+    v
+Drivers
+    |
+    v
+External World
 ```
 
-`DefaultAgentLoop` never keeps a message list and contains no token threshold or eviction policy. Each model request receives a fresh `ContextWorkingSet` through the replaceable `ContextService` seam. `Session.derive_messages()` remains the complete V0.1–V0.3 compatibility projection; the Loop now uses the budgeted projection. Boundary, WAL, and `tool/call` events are log-only; `user/message`, `assistant/message`, and `tool/result` produce Context Pages.
+The LLM is an untrusted proposer. The Kernel owns runtime invariants:
+authorization, lifecycle validation, durable truth, recovery classification,
+resource access checks, IPC delivery state, and durable side-effect boundaries.
 
-## Resource layer
+Host policy remains outside the Kernel. Prompt strategy, model choice, business
+workflow, human approval, retry policy, restart policy, memory strategy, and
+product UI are policy-layer concerns.
 
-V0.5 externalizes selected oversized Tool Results before mutation commit and before `tool/result` append. `ResourceService` generates `ResourceId`/`HandleId`, commits bytes through `ResourceStore`, checks exact agent/session ownership, validates the only supported `artifact://` URI and byte range, and returns a safe `ResourceHandle`. `LocalResourceStore` atomically publishes durable payload+metadata directories. The model sees no store path and can retrieve only a bounded range through registered `resource_stat` / `resource_read` ToolDefinitions.
+## Object Model
 
-Session remains the semantic source of truth for the Tool execution and its handle; ResourceStore is the byte source of truth for externalized content. Context VM projects only the preview+handle already present in Session and never reads or mutates resource bytes. A committed resource absent from a `tool/result` is a retained, identifiable orphan (even if an interrupted mutation WAL mentions it); V0.5 deliberately defers automatic GC. See [`architecture/V0.5_RESOURCE_ARCHITECTURE.md`](architecture/V0.5_RESOURCE_ARCHITECTURE.md).
+```text
+Agent      = capability principal and semantic actor
+Process    = schedulable runtime identity
+Session    = durable single-writer semantic journal
+Context    = model-visible projection over durable truth
+Resource   = durable bytes/metadata behind a Kernel handle
+IPC        = Kernel-owned local communication mechanism
+Scheduler  = cooperative Process mechanism
+Accounting = runtime observation and budget input
+```
+
+Important separations:
+
+- Agent != Process.
+- Agent Tree != Process Tree.
+- Process lineage does not imply authority inheritance.
+- Session is durable truth; Context is a projection.
+- ResourceHandle is a reference, not permission.
+- ResourceStore is storage, not authorization.
+- IPC payload is data, not authority.
+- Runtime accounting is not a durable billing ledger.
+
+## Runtime Stack
+
+| Version | Implemented layer |
+| --- | --- |
+| V0.1 | Agent execution loop and tool boundary. |
+| V0.2 | Session persistence, replay, and recovery analysis. |
+| V0.3 | Durable Tool WAL and reconciliation classifications. |
+| V0.4 | Context VM, Context Pages, working sets, pruning, and compaction. |
+| V0.5 | Resource/Artifact Handle layer for large tool results. |
+| V0.6 | Structured Capability core and Tool/Resource/Durable enforcement. |
+| V0.7 | Process runtime, cooperative Scheduler, and resource accounting. |
+| V0.8 | Agent Registry, Process Tree, Capability Delegation, Kernel IPC, Resource Sharing, runtime isolation, integrated multi-agent recovery, and Multi-Agent RuntimeBench. |
+
+## Core Modules
+
+| Module | Responsibility |
+| --- | --- |
+| `agent.py` | `AgentControlBlock`, Agent identity, Agent Registry, Agent Tree, budgets, and Agent-owned capability principal state. |
+| `process.py` | `ProcessControlBlock`, process lifecycle states, capability snapshots for attribution, and process runtime identity. |
+| `scheduler.py` | `ProcessManager`, Process Tree metadata, cooperative scheduling queues, safe points, budget blocking, pause/cancel, and fault notification. |
+| `session.py` | Append-only semantic log, persistence coordination, and replayed in-process event projection. |
+| `events.py` | Closed event vocabulary for Session, Tool WAL, Context, Agent, Process, IPC audit, Resource sharing, and authorization audit facts. |
+| `persistence.py` | Versioned Session JSONL/in-memory persistence and corruption handling. |
+| `recovery.py` | Replay validation and durable operation recovery classification. |
+| `multi_agent_recovery.py` | Integrated multi-agent reconstruction over Agent, Process, ResourceShare, IPC, Session, and WAL facts. |
+| `capabilities.py` | `CapabilityGrant`, authorization requests/decisions, evaluator, delegation narrowing, provenance, and scope helpers. |
+| `tools.py` | Tool schema projection, legacy and structured authorization, execution resolution, and direct execution compatibility checks. |
+| `durable_tools.py` | WAL prepare/dispatch/commit/abort/reconcile, operation identity, authorization metadata, and side-effect recovery boundaries. |
+| `resources/` | Resource metadata, handles, local store, owner checks, capability checks, Resource sharing, result externalization, and bounded reads. |
+| `ipc.py` | Kernel IPC channels, durable envelopes, at-least-once delivery until ack, per-channel FIFO, backpressure, and reconstruction. |
+| `context/` | Context Pages, projection, token estimation, pressure/reclaim policy, deterministic pruning, durable compaction, and working-set selection. |
+| `accounting.py` | Runtime usage snapshots, aggregation, budget comparisons, and Host/Agent/Process budget helpers. |
+| `loop.py` | Default Agent loop orchestration and optional scheduler/accounting safe-point integration. |
+| `llm.py` | Provider-neutral `LLMService` and deterministic `ScriptedLLM`. |
+| `providers/openai_compatible.py` | Optional OpenAI-compatible Chat Completions adapter with explicit endpoint configuration only. |
+
+## Durable vs Runtime-Only State
+
+| Durable semantic state | Runtime-only state |
+| --- | --- |
+| Agent identity/tree facts. | Scheduler READY/RUNNING/WAITING/BLOCKED queues. |
+| Session events. | Live fault queues and supervision notifications. |
+| Process identity/tree creation facts. | UsageCollector counters. |
+| Capability delegation provenance. | Runtime Context working set. |
+| IPC persistence state. | Temporary runtime indexes. |
+| Resource metadata and ownership. | Python object identity. |
+| ResourceShare facts. | Current in-memory queue structures. |
+| Durable Tool WAL facts. | Live admission state after restart. |
+
+Recovery uses:
+
+```text
+validated durable semantic facts
++ current Host configuration
++ fresh runtime mechanisms
+```
+
+It does not serialize or restore arbitrary pre-crash runtime state as current
+authority.
+
+## Authorization Model
+
+Agent remains the authorization principal.
+
+Capability evaluation is Kernel mechanism:
+
+```text
+AuthorizationRequest(agent_id, action, resource)
+    -> CapabilityEvaluator
+    -> AuthorizationDecision
+```
+
+Structured `CapabilityGrant` values coexist with legacy capability strings for
+backward compatibility.
+
+Delegation is explicit and narrowed:
+
+```text
+child effective authority
+<= delegated authority
+<= current parent effective authority
+```
+
+Delegation provenance is durable, but historical delegation facts are not the
+same as current effective authority. A child Agent starts deny-by-default.
+
+The implementation does not provide RBAC, IAM, namespace security, or complete
+revocation semantics.
+
+## Tool and Durable Side Effects
+
+Tool schemas shown to the model are projected from current authorization.
+Execution rechecks authorization, so a fabricated hidden tool call is denied.
+
+Durable mutations follow:
+
+```text
+Authorization
+  -> WAL prepare
+  -> dispatch authorization
+  -> external effect
+  -> commit / abort / reconcile
+```
+
+Recovery classifications remain explicit:
+
+- `SAFE_TO_RETRY`
+- `IDEMPOTENT_RETRY_ALLOWED`
+- `RECONCILE_REQUIRED`
+- `COMPLETED`
+- `MANUAL_REQUIRED`
+
+Recovery is not blind retry. Already-dispatched durable obligations can survive
+process cancellation, process failure, restart, or later authority shrink for
+new work.
+
+## Resource Model
+
+`ResourceStore` stores bytes and metadata. It is not an authorization authority.
+
+`ResourceService` authorizes:
+
+- owner access;
+- capability checks;
+- cross-Agent ResourceShare checks;
+- range validation;
+- store reads.
+
+Cross-Agent access requires:
+
+```text
+current Capability authorization
+AND
+active ResourceShare
+```
+
+A handle, URI, IPC `resource_refs` field, or grant-like JSON payload does not
+grant access by itself.
+
+## IPC Model
+
+`KernelIPC` owns local point-to-point channels and durable message envelopes.
+
+Message states:
+
+```text
+PENDING -> DELIVERED -> ACKED
+```
+
+V0.8 implements at-least-once observable delivery until ack. A delivered but
+unacked message may redeliver after restart. Per-channel FIFO is implemented
+for the tested point-to-point channel; no global total order is claimed.
+
+IPC transfers structured data only. It does not grant capabilities, Resource
+shares, tool permission, namespace access, or ownership.
+
+## Scheduler, Budget, Fault, and Cancellation
+
+The Scheduler schedules Processes, not Agents. Safe points are cooperative and
+exist around turn, step, LLM, Tool, and durable-dispatch boundaries.
+
+Budget hierarchy:
+
+```text
+Host
+  -> Agent
+      -> Process
+```
+
+Budget exhaustion blocks a process at a safe point. It is a runtime condition,
+not a semantic task failure.
+
+Child process fault does not automatically become parent process fault.
+Cancellation is not rollback and is not revocation. Durable WAL facts and IPC
+persistence survive cancellation.
 
 ## Context VM
 
-```text
-Durable Session Event Log (source of truth)
-                  ↓
-          Context Projection
-                  ↓
-            Context Pages
-                  ↓
-       Policy / Working Set
-                  ↓
-      Request Token Accounting
-                  ↓
-          Context Pressure
-                  ↓
-              Reclaim
-       ┌──────────┼──────────┐
-    Eviction   Tool Result   Compaction
-                 Pruning
-                  ↓
-             ModelRequest
-                  ↓
-              Provider
-                  ↓ overflow
-            Forced Reclaim
-                  ↓
-       Rebuild Smaller Request
-                  ↓
-             Retry Once
-```
-
-The key responsibility split is:
-
-- **Session:** what actually happened? It remains the durable, append-only source of truth.
-- **Context VM:** what should the current model Step see? It derives a disposable working set without editing history.
-
-Context VM is not long-term memory and is not RAG. Phase 2 compaction is a bounded pressure-reclaim mechanism that creates a durable, provenance-carrying derived checkpoint; it does not claim perfect recall or infinite context.
-
-### Context Page model
-
-Each immutable `ContextPage` carries:
-
-- a Session-qualified `page_id`;
-- `kind`: `SYSTEM`, `USER_MESSAGE`, `ASSISTANT_MESSAGE`, `TOOL_RESULT`, or a durable derived `SUMMARY`;
-- exact model-facing `content` and optional provider-neutral `Message`;
-- estimated `token_cost`;
-- policy fields `priority`, `temperature`, and `pinned`;
-- origin metadata `created_seq` and `turn`;
-- `trust_label`: `KERNEL`, `USER`, `TOOL`, or `EXTERNAL`;
-- `dependencies` and an optional `atomic_group`.
-
-There is no persisted `last_access`, VFS `source_uri`, embedding, or mutable Page store. A Tool Result Page may contain a V0.5 `artifact://` handle because that handle is already durable Session data; Context Page itself does not own or resolve it. Raw Pages use Session-qualified event identity; Summary Pages additionally carry explicit source Page/event identities and a source fingerprint.
-
-Projection and policy are separate. `ContextProjector` deterministically maps current Session events to neutral Pages and never projects Turn/Step boundaries, Tool Calls, or `tool/prepare`, `tool/dispatch`, `tool/commit`, `tool/abort`, and `tool/reconcile`. `ContextPolicy` may change only priority, temperature, and pin status; the manager rejects a policy that changes content, identity, cost, trust, dependency, or origin.
-
-### Budget and estimation
-
-`ContextBudget` defines:
+The Session event log is durable truth. The Context VM answers what the next
+model request should see.
 
 ```text
-available_input_tokens = max_tokens - reserved_output_tokens
+Session events
+  -> Context projection
+  -> Context Pages
+  -> policy and working set
+  -> ModelRequest
 ```
 
-The explicit output reservation prevents input selection from consuming the entire advertised model window. `TokenEstimator` is a provider-neutral protocol. The built-in `ApproximateTokenEstimator` uses deterministic Unicode-code-point length divided by a configurable characters-per-token ratio, with no `tiktoken` or Provider import. Its count is an estimate, not exact model billing; deployments can inject a Provider-specific estimator later.
+Eviction, pruning, and compaction alter model-visible projection only. They do
+not delete raw Session facts.
 
-The estimator prices system and message Pages. Tool schemas and Provider envelope overhead are not Pages yet, so deployments requiring a hard wire-level cap must reserve that overhead in the supplied budget.
+## RuntimeBench Evidence
 
-### Default policy
-
-`DefaultContextPolicy` is deterministic and configurable through `ContextPolicyConfig`:
-
-- system prompt: `PINNED`;
-- current user message: `PINNED` by default;
-- other current-Turn Pages: `HOT`;
-- Pages within `recent_turns`: `HOT`;
-- ordinary older Pages: `WARM`;
-- Tool groups whose result exceeds `large_tool_result_threshold_tokens`, or ages beyond `tool_result_cold_after_turns`: `COLD`.
-
-Pin choice is policy; pin enforcement is mechanism. Manual `pin()` can add residency, `unpin()` removes only that manual pin, and policy-owned pins remain authoritative.
-
-### Working-set selection
-
-Selection proceeds as follows:
-
-1. Reproject all available Pages from current truth.
-2. Apply and validate policy-only selection metadata.
-3. Apply manual pins and one-shot page-in requests.
-4. Expand mandatory Pages through atomic groups and dependencies.
-5. Fail with `ContextBudgetExceeded` if mandatory closure exceeds input budget.
-6. If the complete projection fits, select everything without arbitrary eviction.
-7. Otherwise consider remaining atomic units by temperature, priority, recency, and stable identity, admitting only units whose dependency closure fits.
-8. Restore selected Pages to `created_seq` causal order and validate Tool protocol before building messages.
-
-Evicted Pages remain in the returned metrics and Page projection and, more importantly, their source events remain untouched in Session. A later larger budget may select them naturally. `request_page(page_id)` makes an available Page plus its dependency/atomic closure mandatory for the next successful working set, then clears the request.
-
-### Tool protocol atomicity
-
-An assistant message containing Tool Calls and all corresponding Tool Results share one atomic group and mutual dependency closure. Selection includes or excludes that group as one unit. `ContextWorkingSet.to_messages()` independently validates that each selected Tool Result follows a selected assistant Tool Call and that no selected Tool Call is left without its Result. Final Session order is retained, so the OpenAI-compatible adapter never receives a priority-sorted or orphaned tool transcript.
-
-### Metrics and durable-event decision
-
-Every working set reports:
+V0.8 evidence is frozen in:
 
 ```text
-projected_pages / projected_tokens
-selected_pages / selected_tokens
-evicted_pages / evicted_tokens
-pinned_pages
-budget_tokens
+benchmarks/results/runtimebench_v0.8.json
 ```
 
-AgentKernel does not append `context/working-set` to Session. Selection and metrics are reconstructable projections. Summary generation is different: it is expensive and non-deterministic, so its provenance and commit lifecycle are durable even though the Summary remains derived data.
-
-## Context Reclamation
+Summary:
 
 ```text
-Context VM projection
-        ↓
-ContextPressure
-        ↓
-ContextReclaimPolicy
-        ↓
-eviction → deterministic Tool Result pruning → semantic compaction
-        ↓
-rebuilt budgeted Working Set
+B1-B8 = 8/8 PASS
+B8 M1-M10 = 10/10 PASS
+M10 horizons 100, 500, 1000 = PASS
 ```
 
-The resource mechanism and action policy are separate. `ContextPressure` derives `NORMAL`, `PRESSURED`, `CRITICAL`, and `OVERFLOW` from projected tokens, selected working-set tokens, available input budget, and reserved output. The default policy maps increasing pressure to eviction, then pruning, then compaction; `DefaultAgentLoop` contains none of those branches.
-
-The invariants are strict:
-
-```text
-Eviction != deletion
-Pruning != raw Tool Result mutation
-Summary != authoritative Session truth
-Compaction != Session history rewrite
-```
-
-### Deterministic pruning
-
-Oversized Tool Result Pages are rewritten only for the model-visible projection as `head + omission marker + tail`. The tail retains late diagnostics, while provenance records the stable source Page ID, original and retained token costs, and pruning strategy. The assistant Tool Call and matching pruned Tool Result keep their existing atomic group, dependencies, message role, and call ID. The full structured Tool Result remains byte-for-byte represented by its original Session event.
-
-### Durable Summary and provenance
-
-`ContextCompactor` selects a deterministic contiguous older range, never splits an atomic group, stops across pinned/System constraints, and retains a configurable recent token tail verbatim. It calls only the provider-neutral `LLMService` with a factual handoff/checkpoint prompt. A Summary Page records source sequence bounds, leaf event sequences, immediate and original token costs, source Page identities/fingerprint, timestamp, parent Summary IDs, and optional model/provider labels.
-
-The durable lifecycle is:
-
-```text
-context/compaction-requested
-context/compaction-started
-context/summary-created
-context/compaction-completed
-```
-
-The source fingerprint is revalidated after model generation and before commit. A failure appends `context/compaction-aborted`. Replay activates a Summary only after the matching completion record. A crash with only request/start, or even an uncompleted created Summary, leaves the prior raw representation active and reports an interrupted compaction. A completed Summary replays identically after restart.
-
-### Shadow and rolling replacement
-
-A completed Summary shadows exactly its contiguous source Pages in the model-visible projection; it never removes those events from Session. Ordinary selection therefore sees the Summary instead of both Summary and source duplicates. When pressure grows again, a range containing Summary S1 plus newer old Pages may become Summary S2. S2 records S1 as a parent and replaces it in the visible projection, preventing an indefinitely growing stack of overlapping checkpoints. Raw source events remain recoverable from Session, although phase 2 does not yet expose a special API to page shadowed originals alongside their active Summary.
-
-### Metrics and overflow boundary
-
-Working-set metrics add pressure state, pruned Page count/savings, compacted Page/source costs, Summary cost, total reclaim savings, and completed compaction count. Page costs still use the configured estimator. Phase 3 separately accounts for the complete Provider request.
-
-### Provider-aware request accounting
-
-```text
-Context Pages + Tool Schemas + system prompt
-                    ↓
-             RequestTokenAccounting
-                    ↓
-       RequestTokenEstimate breakdown
-                    ↓
-              ModelRequest budget
-```
-
-`RequestTokenAccounting` is a provider-neutral adapter seam. Its deterministic fallback counts system prompt, role/content and per-message overhead, Tool Call IDs/names/JSON arguments, Tool Result messages, Tool Schema name/description/JSON parameters, and request envelope. `ModelContextLimits` carries provider, model, context window, maximum output, and output reserve. When limits are present on `LLMService`, the default loop derives `ContextBudget` from them; an explicit caller budget still wins.
-
-The fallback is stable and network-free, not exact. A Provider adapter can expose a model-specific tokenizer through the same interface without importing that SDK into Context VM. Successful `ModelResponse.usage` records Provider-reported input/output/total tokens when the wire response supplies them; semantic Session history does not persist billing telemetry.
-
-### Provider overflow recovery
-
-```text
-Session Event Log
-      ↓
-Context Projection → Working Set → request accounting → ModelRequest
-                                                       ↓
-                                                   Provider
-                                                       ↓
-                                             normalized overflow?
-                                                       ↓ yes
-                                      ContextService.force_reclaim()
-                                                       ↓
-                                      measurably smaller ModelRequest
-                                                       ↓
-                                                retry once only
-```
-
-Provider-specific status/code/message recognition belongs exclusively to the Provider adapter. Core sees `LLMErrorKind.CONTEXT_OVERFLOW`, distinct from rate limit, timeout, service unavailable, authentication, invalid request, protocol, and unknown failures.
-
-`force_reclaim()` raises pressure to `OVERFLOW` and selects against the Context policy's `target_ratio`; the loop contains no eviction/pruning/compaction thresholds. Deterministic eviction and pruning run first. If they make no progress, Context VM may attempt one ordinary durable compaction. The rebuilt request must have a strictly smaller complete-request estimate or the Kernel fails fast. A second Provider overflow becomes `ContextOverflowRecoveryError`; there is no third model call.
-
-The retry surrounds only `LLMService.generate()`. No Assistant event, Tool Call, Tool WAL record, or external handler execution occurs until a response succeeds, so overflow recovery cannot duplicate a Tool side effect. Pinned/mandatory closure remains enforced by `ContextBudgetExceeded` and is never silently discarded.
-
-## Tool boundary
-
-`ToolDefinition` is host-only and contains its handler, required capability, timeout, concurrency classification, effect kind, and optional reconciliation callback. `ToolRegistry.model_schemas()` constructs detached `ToolSchema` values containing only name, description, and input schema. WAL metadata, capabilities, operation identity, timeout implementation, and reconciliation callbacks never enter the model request.
-
-The registry resolves and authorizes again during execution, even when an unauthorized schema was hidden from the model. Direct registry execution is retained for `READ_ONLY` compatibility and rejects mutation Tools; mutation handlers can only be reached through `DurableToolExecutor`. Outcomes use stable codes:
-
-- `ENOENT`: no registered tool.
-- `EACCES`: missing effective capability.
-- `EIO`: handler failure or non-JSON output.
-- `ETIMEDOUT`: configured timeout elapsed.
-
-`EINVAL` also reports an attempted direct mutation dispatch; `ECANCELED` remains reserved for later cancellation work.
-
-## Durable Tool execution
-
-```text
-Model ToolCall
-      ↓
-Kernel resolve + capability check
-      ↓
-tool/prepare(operation_id, tool_call_id, tool_name, effect_kind)
-      ↓ Session.flush()
-tool/dispatch(operation_id, attempt)
-      ↓ Session.flush()
-external Tool handler(arguments, ToolExecutionContext)
-      ↓
-tool/commit(operation_id, output) / tool/abort(operation_id, error_code)
-      ↓ Session.flush()
-tool/result(call_id, semantic result)
-```
-
-The prepare durability boundary is the central invariant: failure to append or flush prepare prevents entry into the mutation handler. Dispatch is also made durable before the call so replay can distinguish a prepared-but-not-dispatched operation from one whose external outcome may be unknown. Capability denial occurs before both records and therefore creates neither durable intent nor external effect.
-
-`tool_call_id` and `operation_id` serve different namespaces. The model/provider supplies the former to correlate a semantic Tool Call and Tool Result. The Kernel generates the latter to identify one real external operation across process restart, retry, and reconciliation. The operation ID is passed through `ToolExecutionContext`, never through model-owned arguments. A retry always retains the prepared operation ID and increments its dispatch attempt.
-
-Host-side effect semantics are:
-
-| Effect kind | External contract | Ambiguous post-dispatch recovery |
-|---|---|---|
-| `READ_ONLY` | No persistent external side effect. | Ordinary re-execution is safe; mutation WAL is unnecessary. |
-| `IDEMPOTENT_MUTATION` | Repeating the same `operation_id` cannot duplicate the effect. | `IDEMPOTENT_RETRY_ALLOWED` with the same identity. |
-| `RECONCILABLE_MUTATION` | The Tool can query external status by `operation_id`. | `RECONCILE_REQUIRED`; only a reliable `NOT_FOUND` permits dispatch. |
-| `OPAQUE_MUTATION` | Neither idempotency nor reliable status lookup exists. | `MANUAL_REQUIRED`; executor retry is rejected. |
-
-Reconciliation observations are `SUCCEEDED`, `FAILED`, `NOT_FOUND`, `IN_PROGRESS`, and `UNKNOWN`. A succeeded observation is durably committed without dispatching again. A failed observation is durably aborted as a known terminal failure. Not found changes the mechanism fact to safe-to-retry; in-progress and unknown remain reconcile-required.
-
-Tool handler `EIO` and `ETIMEDOUT` results remain semantic execution errors, while uncertainty is represented independently in operation recovery classification. In particular, timeout after dispatch is classified according to effect kind rather than being treated as permission for a blind retry.
-
-This protocol is a local WAL for a single external operation, not a distributed transaction. AgentKernel cannot provide universal exactly-once side effects without cooperation from the external system. Stable external idempotency or trustworthy reconciliation can provide effectively-once/recoverable behavior; opaque systems cannot.
-
-## Agent process model
-
-The AgentControlBlock defines `NEW`, `READY`, `RUNNING`, `WAITING`, `PAUSED`, `FAILED`, and `EXITED`. V0.1 actively uses `READY`, `RUNNING`, `WAITING`, and `FAILED`; the others reserve the lifecycle vocabulary needed by later process management.
-
-Both `capabilities` and `capability_bounding_set` are immutable. Construction rejects any effective capability outside the bounding set. Model requests and Tool handlers never receive the AgentControlBlock.
-
-## Budgets and failure closure
-
-`max_steps_per_turn` is checked before opening another Step. `max_tool_calls_per_turn` is checked before dispatching another Tool. Exhaustion appends a closing `step/end` when needed and a `turn/end` with `reason=budget_exceeded`, transitions the Agent to `FAILED`, and raises `LoopBudgetExceeded`.
-
-Unexpected LLM, hook, or Kernel failures close open Step and Turn brackets, transition the Agent to `FAILED`, and propagate the exception. Tool handler failures are normal Tool results and remain visible to the next model Step.
-
-## OpenAI-compatible Provider boundary
-
-`OpenAICompatibleLLM` implements the existing `LLMService.generate()` interface without changing Kernel modules. It uses only `AGENTKERNEL_LLM_BASE_URL`, `AGENTKERNEL_LLM_MODEL`, and the optional `AGENTKERNEL_LLM_API_KEY`; there is no default endpoint or credential discovery.
-
-Outbound conversion supports:
-
-- system and user messages;
-- assistant content and one or more function Tool Calls;
-- tool messages with their required `tool_call_id`;
-- function Tool Schemas containing only name, description, and parameters;
-- `tool_choice=auto` when tools are present.
-
-Inbound conversion requires a non-streaming Chat Completions response. Function arguments must be a JSON string that decodes to an object. Missing identities, invalid arguments, unsupported message content, and inconsistent finish reasons raise `OpenAICompatibleProtocolError` before the response reaches the loop. HTTP errors are normalized at this boundary into context overflow, rate limit, timeout, authentication, unavailable, invalid request, or unknown. HTTP diagnostics redact the configured API key.
-
-The AgentKernel Protocol preserves the semantic information required for basic Tool Calling: assistant Tool Calls carry stable call IDs, and each Tool Result becomes a tool message carrying the same ID. Phase 3 adds optional provider-neutral token usage to `ModelResponse` for benchmark/accounting diagnostics; request IDs and model echoes remain outside semantic Session history.
-
-## Durable Session
-
-```text
-Session.append(event)
-        │
-        ├── validate strict JSON semantics
-        ▼
-SessionPersistence.append(event)
-        │
-        ├── InMemory
-        └── JSONL (single writer)
-
-process restart
-        ↓
-Session.load()
-        ↓
-header + format validation
-        ↓
-event replay / consistency checking
-        ↓
-Session reconstruction + RecoveryAnalysis
-```
-
-`Session` depends only on the `SessionPersistence` protocol. It does not know paths, JSONL records, file handles, fsync, token budgets, or Page residency. The persistence implementation owns storage details and Context VM owns model visibility. `Session` retains a replayed in-process projection for normal access, but the durable Event Log remains the only stored conversation source of truth; full messages, Context Pages, working sets, metrics, and recovery facts are derived.
-
-The on-disk format version is `1`. A JSONL artifact starts with an explicit header record:
-
-```json
-{"created_at":"2026-08-25T00:00:00Z","format_version":1,"record_type":"session/header","session_id":"session-123"}
-{"data":{"turn":1},"record_type":"session/event","seq":1,"time":1787600000.0,"type":"turn/start"}
-```
-
-Header and Event records are distinguished by `record_type`, never an implicit sequence value. A runtime refuses every unsupported format version and every unknown required event type. Serialization is deterministic UTF-8 JSON with finite, lossless JSON values; pickle and automatic string coercion are prohibited.
-
-For JSONL, `append()` writes and flushes the Python stream so the record has entered the driver/OS boundary. `Session.flush()` is the explicit durability checkpoint and calls `fsync`; `close()` performs the same checkpoint and is idempotent. This design intentionally omits background batching and sync policies.
-
-## Recovery validation and states
-
-Replay enforces:
-
-- event sequence exactly `1..N`;
-- non-nested Turn and Step lifecycles, with Step enclosed by Turn;
-- matching Turn/Step identifiers and contiguous per-session Turn/per-Turn Step numbers;
-- Tool Calls declared by the same Step's assistant message;
-- unique Tool Call IDs and exactly one matching Tool Result;
-- no Step or Turn closure while a dispatched Tool Call is pending.
-
-Valid replay produces:
-
-- `COMPLETED` when no Turn, Step, or Tool Call remains open. The last Turn reason is reported separately, so structural completion does not erase an error/budget outcome.
-- `INTERRUPTED` when the prefix is valid but work remains open, including a pending Tool Call or truncated final JSONL record.
-- `CORRUPTED` when bytes, sequence, identifiers, or lifecycle relationships are invalid. Semantic corruption raises `SessionCorruptionError` with a `CORRUPTED` analysis.
-
-V0.2 does not use an `ACTIVE` persisted state because single-process storage has no durable owner lease and cannot infer whether another process is alive. A live in-process open prefix and a crashed prefix are byte-identical; recovery reports facts rather than inventing liveness.
-
-An invalid final unterminated JSONL record is treated as a recognized crash tail: replay stops at the last complete record, returns `INTERRUPTED`, and records a warning. Loading never edits the artifact, and continuation is blocked until an explicit repair API exists. Malformed records elsewhere are corruption.
-
-## Operation recovery analysis
-
-Replay validates operation identity uniqueness, one prepare per mutation Tool Call, effect type, dispatch attempt ordering, legal retry conditions, commit/abort prerequisites, reconciliation status, and agreement between committed output and semantic Tool Result. It then returns a `DurableOperationRecovery` for each prepared operation:
-
-- `SAFE_TO_RETRY`: prepare is durable but dispatch is absent, or reconciliation reliably returned `NOT_FOUND`.
-- `IDEMPOTENT_RETRY_ALLOWED`: dispatch may have occurred and the Tool contract makes the stable operation ID idempotent.
-- `RECONCILE_REQUIRED`: a reconcilable operation crossed dispatch without a terminal observation.
-- `COMPLETED`: commit is durable or reconciliation found a terminal success/failure. A missing `tool/result` still leaves model-side work to recover, but the external effect is no longer ambiguous and must not be dispatched again.
-- `MANUAL_REQUIRED`: an opaque operation crossed dispatch and automatic execution is unsafe.
-
-These are reconstructed mechanism facts, not policy choices. `DurableToolExecutor.retry()` and `.reconcile()` are explicit host calls and reject classifications that do not authorize their mechanism. V0.3 recovery actions append only while the originally prepared Step remains open; it has no cross-Step repair/reopen protocol. The default loop does not silently resume interrupted operations.
-
-## Deliberately deferred
-
-V0.4 phase 3 has no semantic retrieval, RAG, embeddings, long-term memory, full DeepSeek-style Surface subsystem, VFS/artifact handles, infinite context, SQLite, multi-process writer/lease, repair API, snapshot optimization, distributed transaction/2PC/Saga coordinator, argument JSON-Schema validation, streaming, parallel Tool dispatch, external cancellation API, namespace, scheduler, child Agent, IPC, plugin runtime, Gateway, UI, MCP, prompt-injection classifier, complex model registry, multi-Provider fallback, or bundled exact Provider tokenizer.
+RuntimeBench is deterministic, offline, local, and synthetic. It measures
+runtime invariants, not model intelligence or production readiness.
+
+## Public API Surface
+
+The package exports current runtime primitives from `agentkernel/__init__.py`,
+including Agent Registry, Process Manager/Scheduler, Capability and Delegation
+objects, Kernel IPC, Resource Sharing, Durable Tool, Context VM, and integrated
+multi-agent recovery entrypoints.
+
+The V0.8 release audit found no duplicated `__all__` entries and no obvious
+test-only internals exported as public release surface.
+
+## Deliberately Deferred
+
+V0.8 does not implement:
+
+- V0.9 Persistent Memory.
+- Namespace security.
+- Complete revocation semantics.
+- RBAC or IAM.
+- Production sandbox security.
+- Distributed runtime or consensus.
+- Preemptive scheduling.
+- Production SLA.
+- Universal exactly-once side effects.
+- Arbitrary external system atomicity.
+- Claims of superiority over other agent frameworks or products.

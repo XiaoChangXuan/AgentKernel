@@ -12,8 +12,8 @@ Kernel owns invariants.
 
 AgentKernel is not a general-purpose agent framework. Prompts, product policy,
 business workflows, model choice, UI, plugins, and memory products belong above
-the Kernel. AgentKernel focuses on the mechanisms that must remain enforceable
-when model output is wrong, incomplete, or hostile.
+the Kernel. AgentKernel focuses on the runtime mechanisms that must remain
+enforceable when model output is wrong, incomplete, or hostile.
 
 ## Why AgentKernel
 
@@ -25,10 +25,11 @@ Tool-using agents need a runtime boundary because:
 - Processes can crash between meaningful events.
 - Tool results and artifacts can be much larger than model context.
 - Authority cannot safely live in prompts.
+- Multi-agent cooperation needs identity, isolation, and recovery boundaries.
 
 AgentKernel treats the LLM as an untrusted proposer and keeps durable truth,
-authorization, recovery, scheduling, and side-effect boundaries inside trusted
-runtime mechanisms.
+authorization, recovery, scheduling, communication, resource sharing, and
+side-effect boundaries inside trusted runtime mechanisms.
 
 ## Architecture
 
@@ -36,19 +37,19 @@ runtime mechanisms.
 LLM / policy layer
     |
     v
-Agent
+Agent                capability principal and semantic actor
     |
     v
-Process
+Process              schedulable runtime identity
     |
     v
 Scheduler / Accounting
     |
     v
-Session / Context VM
+Session / Context VM  durable truth and model-visible projection
     |
     v
-Tool / Durable Tool / Resource
+Tool / IPC / Resource / Durable WAL
     |
     v
 External World
@@ -57,15 +58,18 @@ External World
 The key object boundaries are:
 
 - Agent != Process.
+- Agent Tree != Process Tree.
 - Session != Context.
+- Context != durable truth.
 - Resource != Handle.
-- LLM != Authority.
-- Accounting != durable ledger.
 - ResourceStore != authorization boundary.
+- IPC payload != authority.
+- Accounting != durable ledger.
+- LLM != Authority.
 
 ## Current Capabilities
 
-The current V0.7 alpha baseline contains:
+The current V0.8 alpha baseline contains:
 
 | Version | Mechanism |
 | --- | --- |
@@ -76,12 +80,13 @@ The current V0.7 alpha baseline contains:
 | V0.5 | Virtual Resource / Artifact Handle for large tool results. |
 | V0.6 | Capability core and enforcement at Tool, Resource, and Durable boundaries. |
 | V0.7 | Process runtime, cooperative scheduler, and runtime accounting. |
+| V0.8 | Agent Registry, Process Tree, Capability Delegation, Kernel IPC, Resource Sharing, runtime isolation, integrated multi-agent recovery, and Multi-Agent RuntimeBench. |
 
 ## Kernel Invariants
 
 1. LLM is never Kernel.
 2. Side effects cross a trusted boundary.
-3. Session is durable truth.
+3. Session is durable semantic truth.
 4. Context is a model-visible projection.
 5. Mechanism and policy remain separated.
 6. Resource is not the same thing as Handle or Preview.
@@ -90,6 +95,12 @@ The current V0.7 alpha baseline contains:
 9. Scheduler owns runtime mechanism, not business policy.
 10. Durable mutations remain WAL/reconcile controlled.
 11. Accounting is observation, not a durable billing ledger.
+12. IPC transfers data, not authority.
+13. Cross-Agent Resource access requires both current capability authorization
+    and an active ResourceShare.
+14. Recovered runtime state is reconstructed from durable semantic facts and
+    current Host configuration; stale runtime-only state is not restored as
+    authority.
 
 ## RuntimeBench
 
@@ -99,16 +110,16 @@ The canonical benchmark entrypoint is:
 python -m benchmarks.runtimebench
 ```
 
-The canonical machine-readable result is:
+The canonical V0.8 machine-readable result is:
 
 ```text
-benchmarks/results/runtimebench_v0.7.json
+benchmarks/results/runtimebench_v0.8.json
 ```
 
-The canonical human-readable evidence review is:
+The canonical V0.8 human-readable evidence review is:
 
 ```text
-docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md
+docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md
 ```
 
 Current implemented RuntimeBench families:
@@ -117,25 +128,24 @@ Current implemented RuntimeBench families:
 | --- | --- |
 | B1 Fault Tolerance | PASS |
 | B2 Side Effect Safety | PASS |
-| B3 Context + Truth Preservation | PASS |
+| B3 Context Efficiency / Truth Preservation | PASS |
 | B4 Capability Isolation | PASS |
 | B5 Resource Governance | PASS |
 | B6 Long-Horizon Runtime Stability | PASS |
 | B7 Boundary Isolation | PASS |
+| B8 Multi-Agent Runtime | PASS |
 
 Current summary:
 
 ```text
-total = 7
-passed = 7
+total = 8
+passed = 8
 failed = 0
 decision = PASS
 ```
 
-B6 covers deterministic single-agent long-horizon profiles at 100, 500, and
-1000 logical steps. B8 Scheduler Scalability is not implemented in the current
-release evidence. B8 is a future micro/stress benchmark, not a headline
-research claim.
+B8 covers M1-M10 multi-agent runtime invariants. M10 passes deterministic
+offline profiles at 100, 500, and 1000 logical steps.
 
 ## Run
 
@@ -156,10 +166,10 @@ python -m pip install -e ".[test]"
 pytest -q
 ```
 
-Run RuntimeBench:
+Run RuntimeBench without rewriting the frozen artifact:
 
 ```bash
-python -m benchmarks.runtimebench
+python -m benchmarks.runtimebench --no-write
 ```
 
 Optional real-provider examples require explicit OpenAI-compatible endpoint
@@ -172,12 +182,13 @@ Start with:
 
 - [docs/README.md](docs/README.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/releases/V0.7_RELEASE.md](docs/releases/V0.7_RELEASE.md)
-- [docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md](docs/evaluation/V0.7_RUNTIMEBENCH_REVIEW.md)
+- [docs/releases/V0.8_RELEASE_REVIEW.md](docs/releases/V0.8_RELEASE_REVIEW.md)
+- [docs/releases/V0.8_RELEASE_NOTES.md](docs/releases/V0.8_RELEASE_NOTES.md)
+- [docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
 
 ## Supported Claims
 
-The V0.7 alpha evidence supports only scoped runtime-mechanism claims:
+The V0.8 alpha evidence supports only scoped runtime-mechanism claims:
 
 - Session replay preserves durable facts for covered deterministic crash
   prefixes.
@@ -192,26 +203,28 @@ The V0.7 alpha evidence supports only scoped runtime-mechanism claims:
   points when configured budgets are exceeded.
 - V0.1-V0.7 runtime mechanisms preserve tested invariants in deterministic
   single-agent workloads up to 1000 logical steps.
-- Kernel object boundaries remain separated in tested single-agent V0.7
-  fixtures.
+- V0.8 multi-agent mechanisms preserve tested identity, delegation, IPC,
+  resource sharing, budget, fault, cancellation, and recovery invariants in
+  deterministic offline fixtures.
+- Tested multi-agent recovery reconstructs durable semantic facts and fresh
+  runtime mechanisms without restoring stale runtime-only authority.
 
 ## Limitations
 
-AgentKernel V0.7 alpha does not include:
+AgentKernel V0.8 alpha does not include:
 
-- Multi-Agent runtime.
-- Process Tree / Spawn.
-- IPC.
-- Delegation or revocation.
-- Namespace.
-- Persistent Memory.
+- V0.9 Persistent Memory.
+- Namespace security.
+- Complete revocation semantics.
 - RBAC or IAM.
 - Production sandbox security.
+- Distributed runtime correctness.
+- Distributed consensus.
+- Production SLA or production workload traces.
 - Preemptive scheduling.
 - Universal exactly-once side effects.
-- General production scalability.
+- Arbitrary external system atomicity.
 - Semantic long-horizon reasoning.
-- B8 scheduler scalability evidence.
 - Claims of superior model intelligence.
 - Claims that AgentKernel beats Codex, OpenHands, Gemini CLI, LangChain, Letta,
   or any other project.
@@ -222,8 +235,8 @@ production workload traces.
 
 ## Roadmap
 
-- V0.8: Multi-Agent Runtime / IPC / Delegation architecture.
+- V0.8: Multi-Agent Runtime alpha release freeze.
 - V0.9: Persistent Memory Runtime architecture.
 - V1.0: Stable Agent Runtime Kernel baseline.
 
-V0.8 and V0.9 are not implemented in this release.
+V0.9 is not implemented in this release.

@@ -8,25 +8,23 @@ necessarily current authoritative specifications.
 
 1. [Project README](../README.md)
 2. [Current Architecture](ARCHITECTURE.md)
-3. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
-4. [RuntimeBench V0.7 Design](evaluation/RUNTIMEBENCH_V0.7_DESIGN.md)
-5. [RuntimeBench Evidence Review](evaluation/V0.7_RUNTIMEBENCH_REVIEW.md)
-6. [V0.7 Release](releases/V0.7_RELEASE.md)
+3. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
+4. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
+5. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+6. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
 
 ## Canonical Documents
 
-- [Current architecture](ARCHITECTURE.md): implemented runtime architecture.
+- [Current architecture](ARCHITECTURE.md): implemented V0.8 runtime architecture.
+- [V0.8 release review](releases/V0.8_RELEASE_REVIEW.md): release freeze audit,
+  claim boundary, evidence provenance, and validation record.
+- [V0.8 release notes](releases/V0.8_RELEASE_NOTES.md): alpha release summary.
+- [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md):
+  B1-B8 evidence, B8 M1-M10 evidence, and limitations.
 - [Current evaluation strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md):
   evaluated claims and claim discipline.
-- [RuntimeBench V0.7 design](evaluation/RUNTIMEBENCH_V0.7_DESIGN.md):
-  benchmark structure, schema, fixtures, and methodology.
-- [RuntimeBench V0.7 evidence review](evaluation/V0.7_RUNTIMEBENCH_REVIEW.md):
-  measured V0.7 evidence and limitations.
-- [B6 long-horizon evidence](evaluation/V0.7_LONG_HORIZON_RUNTIMEBENCH.md):
-  deterministic long-horizon RuntimeBench evidence.
-- [V0.7 release](releases/V0.7_RELEASE.md): public release summary.
 
-## Current Architecture
+## Architecture
 
 - [Kernel Architecture Review](architecture/KERNEL_ARCHITECTURE_REVIEW.md)
 - [Architecture Freeze Review](architecture/ARCHITECTURE_FREEZE_REVIEW.md)
@@ -44,14 +42,16 @@ necessarily current authoritative specifications.
 
 - [AgentKernel Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md):
   what claims are evaluated.
+- [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md):
+  current B1-B8 evidence.
 - [RuntimeBench V0.7 Design](evaluation/RUNTIMEBENCH_V0.7_DESIGN.md):
-  benchmark structure and methodology.
+  benchmark structure and methodology for the V0.7 single-agent baseline.
 - [RuntimeBench V0.7 Implementation](evaluation/V0.7_RUNTIMEBENCH_IMPLEMENTATION.md):
-  RuntimeBench runner implementation record.
+  V0.7 RuntimeBench runner implementation record.
 - [RuntimeBench V0.7 Review](evaluation/V0.7_RUNTIMEBENCH_REVIEW.md):
-  actual evidence and limitations.
+  V0.7 evidence and limitations.
 - [V0.7 Long-Horizon RuntimeBench](evaluation/V0.7_LONG_HORIZON_RUNTIMEBENCH.md):
-  B6 composition evidence.
+  B6 single-agent composition evidence.
 
 ## Implementation Notes
 
@@ -74,6 +74,8 @@ necessarily current authoritative specifications.
 - [V0.4 Release](releases/V0.4_RELEASE.md)
 - [V0.7 Release](releases/V0.7_RELEASE.md)
 - [V0.7 Release Freeze Review](releases/V0.7_RELEASE_REVIEW.md)
+- [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
+- [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
 
 ## Research / Historical Notes
 
@@ -96,7 +98,13 @@ without checking the canonical documents above.
 
 ## Benchmark Result Files
 
-Canonical V0.7 result:
+Canonical V0.8 result:
+
+```text
+../benchmarks/results/runtimebench_v0.8.json
+```
+
+Historical V0.7 result:
 
 ```text
 ../benchmarks/results/runtimebench_v0.7.json
