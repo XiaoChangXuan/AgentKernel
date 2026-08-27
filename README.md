@@ -178,13 +178,40 @@ back to public provider endpoints.
 
 ## Documentation
 
-Start with:
+Start here if you are new to the project:
 
+- [中文入门指南](docs/getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
+- [English newcomer guide](docs/getting-started/AGENTKERNEL_GUIDE.en.md)
 - [docs/README.md](docs/README.md)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [Runtime design comparison](docs/research/AGENT_RUNTIME_DESIGN_COMPARISON.md)
 - [docs/releases/V0.8_RELEASE_REVIEW.md](docs/releases/V0.8_RELEASE_REVIEW.md)
 - [docs/releases/V0.8_RELEASE_NOTES.md](docs/releases/V0.8_RELEASE_NOTES.md)
 - [docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+
+Quick tutorials:
+
+```bash
+python examples/tutorials/v0_1_agent_spine.py
+python examples/tutorials/v0_2_recovery.py
+python examples/tutorials/v0_3_durable_side_effect.py
+python examples/tutorials/v0_4_context_vm.py
+python examples/tutorials/v0_5_resource_handle.py
+python examples/tutorials/v0_6_capability_core.py
+python examples/tutorials/v0_7_process_runtime.py
+python examples/tutorials/v0_8_multi_agent_runtime.py
+```
+
+Recommended reading path:
+
+```text
+README
+  -> Getting Started guide
+  -> V0.1-V0.8 tutorials
+  -> Architecture
+  -> Evaluation / RuntimeBench
+  -> Release Review
+```
 
 ## Supported Claims
 
