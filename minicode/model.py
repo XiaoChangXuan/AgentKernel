@@ -41,6 +41,7 @@ class MiniCodeModelResponse:
 class ModelAdapterError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
+        self.detail = message
         super().__init__(message)
 
 
@@ -140,7 +141,7 @@ class OpenAICompatibleAdapter:
         except ModelAdapterError:
             raise
         except Exception as error:
-            raise ModelAdapterError("provider_error", str(error)) from error
+            raise ModelAdapterError("provider_error", _redact(str(error), self.config.api_key)) from error
         latency_ms = max(0, int((time.monotonic() - started) * 1000))
         response = self._parse_response(raw)
         return MiniCodeModelResponse(
@@ -183,8 +184,16 @@ class OpenAICompatibleAdapter:
         try:
             with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
                 data = response.read()
+        except urllib.error.HTTPError as error:
+            detail = _http_error_detail(error.read(64 * 1024 + 1), self.config.api_key)
+            raise ModelAdapterError("provider_http_error", f"HTTP {error.code}: {detail}") from error
+        except TimeoutError as error:
+            raise ModelAdapterError("provider_timeout", _redact(str(error), self.config.api_key)) from error
         except urllib.error.URLError as error:
-            raise ModelAdapterError("provider_error", str(error)) from error
+            raise ModelAdapterError(
+                "provider_connection_error",
+                _redact(str(error), self.config.api_key),
+            ) from error
         decoded = json.loads(data.decode("utf-8"))
         if not isinstance(decoded, Mapping):
             raise ModelAdapterError("provider_error", "provider response must be an object")
@@ -223,6 +232,28 @@ def redact_secret(value: str | None) -> str | None:
     if value is None:
         return None
     return "<redacted>" if value else value
+
+
+def _http_error_detail(raw: bytes, api_key: str | None) -> str:
+    if len(raw) > 64 * 1024:
+        return "response body exceeded diagnostic limit"
+    text = raw.decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        detail = text
+    else:
+        error = payload.get("error") if isinstance(payload, Mapping) else None
+        message = error.get("message") if isinstance(error, Mapping) else None
+        detail = message if isinstance(message, str) else text
+    detail = " ".join(detail.split())[:1000] or "no error detail"
+    return _redact(detail, api_key)
+
+
+def _redact(value: str, api_key: str | None) -> str:
+    if api_key:
+        return value.replace(api_key, "<redacted>")
+    return value
 
 
 def _message_payload(message: Message) -> dict[str, object]:

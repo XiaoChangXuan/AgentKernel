@@ -74,6 +74,7 @@ class MiniCodeRunResult:
     steps: int
     final_message: str | None = None
     reason: str | None = None
+    error_detail: str | None = None
     trace_events: int = 0
 
     @property
@@ -91,6 +92,7 @@ class MiniCodeRunResult:
             "steps": self.steps,
             "final_message": self.final_message,
             "reason": self.reason,
+            "error_detail": self.error_detail,
             "trace_events": self.trace_events,
         }
 
@@ -235,13 +237,14 @@ class MiniCodeAgentLoop:
                 except ModelAdapterError as error:
                     self.trace.record(
                         "model/error",
-                        {"turn": turn, "step": step, "code": error.code},
+                        {"turn": turn, "step": step, "code": error.code, "detail": error.detail},
                     )
                     return self._result(
                         MiniCodeRunStatus.MODEL_ERROR,
                         turns=1,
                         steps=steps,
                         reason=error.code,
+                        error_detail=error.detail,
                     )
                 self._record_model_usage(response.usage, response.model_cost)
                 self.scheduler.safe_point(self.process_id, SchedulerSafePoint.AFTER_LLM_CALL)
@@ -471,6 +474,7 @@ class MiniCodeAgentLoop:
         steps: int,
         final_message: str | None = None,
         reason: str | None = None,
+        error_detail: str | None = None,
     ) -> MiniCodeRunResult:
         return MiniCodeRunResult(
             status=status,
@@ -481,6 +485,7 @@ class MiniCodeAgentLoop:
             steps=steps,
             final_message=final_message,
             reason=reason,
+            error_detail=error_detail,
             trace_events=len(self.trace.events),
         )
 

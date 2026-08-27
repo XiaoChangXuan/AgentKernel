@@ -365,7 +365,7 @@ def _run_chat_task_with_status(
             message=message,
             interrupt_requested=interrupt_requested,
         )
-    renderer.finish(elapsed_seconds=int(time.monotonic() - started))
+    renderer.finish(elapsed_seconds=int(time.monotonic() - started), success=result.ok)
     return result
 
 
@@ -403,8 +403,9 @@ class _ChatStatusRenderer:
             return
         print(text, file=self.stdout, flush=True)
 
-    def finish(self, *, elapsed_seconds: int) -> None:
-        text = f"Done ({elapsed_seconds}s)"
+    def finish(self, *, elapsed_seconds: int, success: bool) -> None:
+        label = "Done" if success else "Failed"
+        text = f"{label} ({elapsed_seconds}s)"
         if self.interactive:
             padded = text.ljust(self._last_line_width)
             print("\r" + padded, file=self.stdout, flush=True)
@@ -557,6 +558,8 @@ def _format_human_result(result) -> str:
     message = f"MiniCode error: {result.status.value}"
     if result.reason:
         message += f" ({result.reason})"
+    if getattr(result, "error_detail", None):
+        message += f"\nprovider detail: {result.error_detail}"
     return message
 
 
@@ -650,25 +653,35 @@ def _openai_compatible_model_from_args(
             "openai-compatible model runs require explicit --allow-network or .minicode/config.json allow_network",
             retryable=False,
         )
-    base_url = args.base_url or os.environ.get("MINICODE_LLM_BASE_URL") or project_config.base_url
-    model = args.model_name or os.environ.get("MINICODE_LLM_MODEL") or project_config.model_name
+    base_url = (
+        args.base_url
+        or os.environ.get("MINICODE_LLM_BASE_URL")
+        or os.environ.get("AGENTKERNEL_LLM_BASE_URL")
+        or project_config.base_url
+    )
+    model = (
+        args.model_name
+        or os.environ.get("MINICODE_LLM_MODEL")
+        or os.environ.get("AGENTKERNEL_LLM_MODEL")
+        or project_config.model_name
+    )
     if not base_url:
         raise MiniCodeError(
             "missing_model_config",
-            "openai-compatible model requires MINICODE_LLM_BASE_URL or --base-url",
+            "openai-compatible model requires --base-url, MINICODE_LLM_BASE_URL, AGENTKERNEL_LLM_BASE_URL, or .minicode/config.json openai_compatible.base_url",
             retryable=False,
         )
     if not model:
         raise MiniCodeError(
             "missing_model_config",
-            "openai-compatible model requires MINICODE_LLM_MODEL or --model-name",
+            "openai-compatible model requires --model-name, MINICODE_LLM_MODEL, AGENTKERNEL_LLM_MODEL, or .minicode/config.json openai_compatible.model",
             retryable=False,
         )
     return OpenAICompatibleAdapter(
         OpenAICompatibleConfig(
             base_url=base_url,
             model=model,
-            api_key=os.environ.get("MINICODE_LLM_API_KEY"),
+            api_key=os.environ.get("MINICODE_LLM_API_KEY") or os.environ.get("AGENTKERNEL_LLM_API_KEY"),
             timeout_seconds=timeout_ms / 1000,
             enabled=True,
         )

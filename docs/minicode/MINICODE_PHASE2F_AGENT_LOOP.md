@@ -93,7 +93,9 @@ While a chat turn is running, the CLI prints observable progress from the
 MiniCode trace, for example `Working (3s • Esc to interrupt) - asking model` or
 `Working (5s • Esc to interrupt) - running tool: read_file`. In a Windows TTY,
 Esc requests cooperative cancellation through the Scheduler at the next safe
-point.
+point. Successful turns finish with `Done (Ns)`. Failed turns finish with
+`Failed (Ns)` and print the structured MiniCode status plus a safe provider
+diagnostic when the model adapter can expose one.
 
 `run` remains the script-facing mode and continues to emit a single JSON object
 with `ensure_ascii=False`, so Chinese output is readable while automation keeps
@@ -106,9 +108,9 @@ OpenAI-compatible model configuration:
 | Setting | Source | Required |
 | --- | --- | --- |
 | Model mode | `--model` or `.minicode/config.json` | no; defaults to `scripted` |
-| Base URL | `--base-url`, `MINICODE_LLM_BASE_URL`, or `.minicode/config.json` | yes for `openai-compatible` |
-| Model name | `--model-name`, `MINICODE_LLM_MODEL`, or `.minicode/config.json` | yes for `openai-compatible` |
-| API key | `MINICODE_LLM_API_KEY` | no |
+| Base URL | `--base-url`, `MINICODE_LLM_BASE_URL`, `AGENTKERNEL_LLM_BASE_URL`, or `.minicode/config.json` | yes for `openai-compatible` |
+| Model name | `--model-name`, `MINICODE_LLM_MODEL`, `AGENTKERNEL_LLM_MODEL`, or `.minicode/config.json` | yes for `openai-compatible` |
+| API key | `MINICODE_LLM_API_KEY` or `AGENTKERNEL_LLM_API_KEY` | no |
 | Network opt-in | `--allow-network` or `.minicode/config.json` `allow_network` | yes for `openai-compatible` |
 
 The API key intentionally has no command-line flag and must not be stored in the

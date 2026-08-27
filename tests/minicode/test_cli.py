@@ -178,6 +178,50 @@ def test_cli_openai_compatible_reads_environment_config(tmp_path, monkeypatch):
     assert body["messages"][-1] == {"role": "user", "content": "finish immediately"}  # type: ignore[index]
 
 
+def test_cli_openai_compatible_reads_agentkernel_environment_fallback(tmp_path, monkeypatch):
+    fixture = make_minicode_workspace(tmp_path)
+    stdout = io.StringIO()
+    seen_requests: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        seen_requests.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "body": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return _FakeHTTPResponse(_openai_response(text="fallback ok"))
+
+    monkeypatch.delenv("MINICODE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("MINICODE_LLM_MODEL", raising=False)
+    monkeypatch.delenv("MINICODE_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("AGENTKERNEL_LLM_BASE_URL", "https://agentkernel-provider.example/v1")
+    monkeypatch.setenv("AGENTKERNEL_LLM_MODEL", "agentkernel-model")
+    monkeypatch.setenv("AGENTKERNEL_LLM_API_KEY", "ak-test-secret")
+    monkeypatch.setattr("minicode.model.urllib.request.urlopen", fake_urlopen)
+
+    exit_code = main(
+        [
+            "run",
+            "--workspace",
+            str(fixture.root),
+            "--model",
+            "openai-compatible",
+            "--allow-network",
+            "finish immediately",
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert exit_code == 0
+    assert payload["final_message"] == "fallback ok"
+    assert seen_requests[0]["url"] == "https://agentkernel-provider.example/v1/chat/completions"
+    assert seen_requests[0]["authorization"] == "Bearer ak-test-secret"
+    assert seen_requests[0]["body"]["model"] == "agentkernel-model"  # type: ignore[index]
+
+
 def test_cli_openai_compatible_reads_project_config(tmp_path, monkeypatch):
     fixture = make_minicode_workspace(tmp_path)
     config_dir = fixture.root / ".minicode"
@@ -332,8 +376,54 @@ def test_cli_openai_compatible_connection_error_is_structured_model_error(tmp_pa
     payload = json.loads(stdout.getvalue())
     assert exit_code == 1
     assert payload["status"] == "model_error"
-    assert payload["reason"] == "provider_error"
+    assert payload["reason"] == "provider_connection_error"
+    assert "connection refused" in payload["error_detail"]
     assert "Traceback" not in stdout.getvalue()
+
+
+def test_cli_openai_compatible_http_error_includes_safe_detail(tmp_path, monkeypatch):
+    fixture = make_minicode_workspace(tmp_path)
+    stdout = io.StringIO()
+    secret = "sk-minicode-http-secret"
+
+    def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        body = json.dumps(
+            {"error": {"message": f"bad credential {secret}"}},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        raise urllib.error.HTTPError(
+            request.full_url,
+            401,
+            "Unauthorized",
+            hdrs={},
+            fp=io.BytesIO(body),
+        )
+
+    monkeypatch.setenv("MINICODE_LLM_BASE_URL", "https://env-provider.example/v1")
+    monkeypatch.setenv("MINICODE_LLM_MODEL", "env-model")
+    monkeypatch.setenv("MINICODE_LLM_API_KEY", secret)
+    monkeypatch.setattr("minicode.model.urllib.request.urlopen", fake_urlopen)
+
+    exit_code = main(
+        [
+            "run",
+            "--workspace",
+            str(fixture.root),
+            "--model",
+            "openai-compatible",
+            "--allow-network",
+            "finish immediately",
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert exit_code == 1
+    assert payload["status"] == "model_error"
+    assert payload["reason"] == "provider_http_error"
+    assert "HTTP 401" in payload["error_detail"]
+    assert "<redacted>" in payload["error_detail"]
+    assert secret not in stdout.getvalue()
 
 
 def test_cli_openai_compatible_runs_fake_provider_tool_loop(tmp_path, monkeypatch):
@@ -575,6 +665,49 @@ def test_cli_chat_reports_live_progress_while_running(tmp_path, monkeypatch):
     assert "MiniCode 已完成。" in output
     assert '"final_message"' not in output
     assert stderr.getvalue() == ""
+
+
+def test_cli_chat_model_error_reports_failed_status_and_detail(tmp_path, monkeypatch):
+    fixture = make_minicode_workspace(tmp_path)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        body = json.dumps({"error": {"message": "authentication failed"}}).encode("utf-8")
+        raise urllib.error.HTTPError(
+            request.full_url,
+            401,
+            "Unauthorized",
+            hdrs={},
+            fp=io.BytesIO(body),
+        )
+
+    monkeypatch.setenv("MINICODE_LLM_BASE_URL", "https://env-provider.example/v1")
+    monkeypatch.setenv("MINICODE_LLM_MODEL", "env-model")
+    monkeypatch.delenv("MINICODE_LLM_API_KEY", raising=False)
+    monkeypatch.setattr("minicode.model.urllib.request.urlopen", fake_urlopen)
+
+    exit_code = main(
+        [
+            "chat",
+            "--workspace",
+            str(fixture.root),
+            "--model",
+            "openai-compatible",
+            "--allow-network",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+        stdin=io.StringIO("你好\n/exit\n"),
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "Failed (" in output
+    assert "MiniCode error: model_error (provider_http_error)" in output
+    assert "provider detail: HTTP 401: authentication failed" in output
+    assert "Done (" not in output
+    assert "MiniCode stopped with model_error (provider_http_error)" in stderr.getvalue()
 
 
 def test_cli_chat_exits_on_esc_from_stdin(tmp_path):
