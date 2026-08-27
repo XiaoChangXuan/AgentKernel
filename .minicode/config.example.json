@@ -1,0 +1,13 @@
+{
+  "model": "openai-compatible",
+  "allow_network": false,
+  "openai_compatible": {
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "local-model"
+  },
+  "defaults": {
+    "approve": "on-mutation",
+    "max_turns": 20,
+    "timeout_ms": 30000
+  }
+}

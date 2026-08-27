@@ -166,6 +166,29 @@ python -m pip install -e ".[test]"
 pytest -q
 ```
 
+Run MiniCode interactively from a workspace:
+
+```bash
+python -m pip install -e .
+minicode
+```
+
+Without installing the console script:
+
+```bash
+python -m minicode
+python -m minicode chat --workspace /path/to/project
+```
+
+MiniCode reads non-secret defaults from `.minicode/config.json` when present.
+Keep provider API keys in environment variables such as
+`MINICODE_LLM_API_KEY`, not in the config file.
+
+In interactive mode, MiniCode prints live status such as
+`Working (3s • Esc to interrupt) - asking model` and updates it as model
+requests and tool calls progress. The `run` command remains script-facing and
+emits JSON.
+
 Run RuntimeBench without rewriting the frozen artifact:
 
 ```bash

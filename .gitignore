@@ -12,3 +12,6 @@ dist/
 .env
 .env.*
 !.env.example
+.minicode/*
+!.minicode/
+!.minicode/config.example.json
