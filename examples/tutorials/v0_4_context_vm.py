@@ -77,6 +77,16 @@ def main() -> None:
     print(f"selected_tokens={working_set.metrics.selected_tokens}")
     print(f"model_messages={len(model_messages)}")
     print(f"context_equals_truth={len(model_messages) == len(durable_messages)}")
+    print()
+    print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+    print("- Context VM projects durable Session events into Context Pages.")
+    print("- The model-visible Working Set can be smaller than durable truth.")
+    print("- Context is a projection, not the source of truth.")
+    print()
+    print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+    print("- It does not use a real model provider.")
+    print("- It does not prove semantic summary quality.")
+    print("- It does not benchmark every context policy.")
 
 
 if __name__ == "__main__":

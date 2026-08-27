@@ -100,6 +100,16 @@ async def main() -> None:
     print(f"agent_id={agent.control.agent_id}")
     print(f"session_id={session.session_id}")
     print("event_types=" + ",".join(event.type.value for event in session.events))
+    print()
+    print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+    print("- ScriptedLLM can drive a deterministic tool-use turn.")
+    print("- A model proposal crosses the AgentKernel Tool boundary.")
+    print("- Session records turn, step, tool/call, and tool/result facts.")
+    print()
+    print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+    print("- It does not use a real model provider.")
+    print("- It does not prove model reasoning quality.")
+    print("- It does not prove crash recovery or side-effect safety.")
 
 
 if __name__ == "__main__":

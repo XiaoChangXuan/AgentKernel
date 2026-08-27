@@ -64,6 +64,16 @@ def main() -> None:
     print(f"blocked_state={ProcessState.BLOCKED.value}")
     print(f"observed_tokens={snapshot.token_usage}")
     print(f"after_unblock_state={process.state.value}")
+    print()
+    print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+    print("- Agent identity remains the capability principal.")
+    print("- Process identity owns runtime scheduling state.")
+    print("- Usage accounting can block a process at a safe point.")
+    print()
+    print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+    print("- It does not use a real model provider.")
+    print("- It does not implement preemptive scheduling.")
+    print("- It does not make accounting a durable billing ledger.")
 
 
 if __name__ == "__main__":

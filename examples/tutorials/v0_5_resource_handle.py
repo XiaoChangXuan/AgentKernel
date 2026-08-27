@@ -45,6 +45,16 @@ def main() -> None:
         print(f"read_preview={read.data.decode()!r}")
         print(f"has_more={read.has_more}")
         print(f"restart_read_success={read.data == payload[:32]}")
+        print()
+        print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+        print("- Large bytes can live in ResourceService instead of context.")
+        print("- Context can carry a bounded artifact:// handle marker.")
+        print("- A restarted ResourceService can read the stored artifact.")
+        print()
+        print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+        print("- It does not use a real model provider.")
+        print("- It does not prove production storage durability.")
+        print("- It does not make a ResourceHandle into authorization.")
 
 
 if __name__ == "__main__":

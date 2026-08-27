@@ -75,6 +75,16 @@ async def main() -> None:
     print(f"denied_ok={denied.ok}")
     print(f"denied_code={denied_code}")
     print(f"matches_eacces={denied.error is not None and denied.error.code is ErrorCode.EACCES}")
+    print()
+    print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+    print("- Capability grants affect model-visible tool schemas.")
+    print("- Execution is checked again at the Tool boundary.")
+    print("- A grantless agent receives EACCES for unauthorized execution.")
+    print()
+    print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+    print("- It does not use a real model provider.")
+    print("- It does not implement RBAC, IAM, namespace, or revocation.")
+    print("- It does not prove production security.")
 
 
 if __name__ == "__main__":

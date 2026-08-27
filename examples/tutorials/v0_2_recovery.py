@@ -112,6 +112,16 @@ async def main() -> None:
             print(f"after_restart_events={len(restored.events)}")
             print(f"derived_messages={len(restored_messages)}")
             print(f"lost_durable_facts={before_types != after_types}")
+            print()
+            print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+            print("- Session JSONL persistence survives runtime object loss.")
+            print("- Recovery analysis can reconstruct completed durable facts.")
+            print("- Derived messages come from Session truth after restart.")
+            print()
+            print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+            print("- It does not use a real model provider.")
+            print("- It does not inject every possible crash prefix.")
+            print("- It does not prove corrupted-log recovery.")
         finally:
             restored.close()
 
