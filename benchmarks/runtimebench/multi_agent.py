@@ -8,7 +8,7 @@ APIs and report semantic invariants as deterministic ``BenchmarkRecord`` rows.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -110,17 +110,18 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
 
     with TemporaryDirectory(prefix="agentkernel-runtimebench-v08-m10-") as root:
         world = _create_world(Path(root), prefix=f"h{horizon}")
-        reader_owner = ResourceOwner("agent-reader", "session-reader")
-        worker_owner = ResourceOwner("agent-worker", "session-worker")
-        reader_evaluator = CapabilityEvaluator(
-            world.registry.get("agent-reader").capability_grants
-        )
-        worker_evaluator = CapabilityEvaluator(
-            world.registry.get("agent-worker").capability_grants
-        )
         counters = {
             "crashes": 0,
             "recoveries": 0,
+            "runtime_restarts": 0,
+            "runtime_object_replacements_verified": 0,
+            "agent_ids_preserved": 0,
+            "process_ids_preserved": 0,
+            "session_durable_events_preserved": 0,
+            "resource_metadata_preserved": 0,
+            "resource_share_preserved": 0,
+            "ipc_durable_envelopes_preserved": 0,
+            "wal_obligations_preserved": 0,
             "ipc_sent": 0,
             "ipc_deliveries": 0,
             "ipc_redeliveries": 0,
@@ -135,24 +136,36 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
             "child_faults": 0,
             "cancellations": 0,
             "durable_operations": 0,
+            "dispatch_before_crash_count": 0,
+            "reconcile_required_observed": 0,
             "reconciliations": 0,
+            "external_effect_count": 0,
+            "authority_shrink_events": 0,
             "unauthorized_effects": 0,
             "unsafe_duplicate_effects": 0,
             "cross_agent_resource_leaks": 0,
             "authority_escalations": 0,
+            "stale_authority_restored": 0,
             "lost_durable_facts": 0,
             "recovery_corruptions": 0,
             "unresolved_mandatory_wal": 0,
         }
+        external_effects: set[str] = set()
         recovered_event_total = 0
         resource_bytes_read = 0
         crash_interval = max(10, horizon // 10)
-        operation_interval = max(25, horizon // 5)
-        budget_interval = max(20, horizon // 8)
-        denial_interval = max(15, horizon // 12)
+        denial_interval = max(5, horizon // 12)
+        process_budget_step = min(2, horizon)
+        agent_budget_step = min(3, horizon)
+        host_budget_step = min(4, horizon)
+        redelivery_step = min(max(5, horizon // 5), horizon)
+        durable_crash_step = min(max(6, horizon // 4), horizon)
+        authority_shrink_step = min(max(7, horizon // 2), horizon)
+        child_fault_step = min(max(8, horizon // 3), horizon)
+        cancellation_step = min(max(9, (2 * horizon) // 3), horizon)
 
         for step in range(1, horizon + 1):
-            message = world.ipc.send(
+            world.ipc.send(
                 channel_id=world.channel_id,
                 sender_process_id=world.parent_process_id,
                 payload={"step": step, "kind": "work"},
@@ -160,33 +173,78 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
                 correlation_id=f"corr-message-{step}",
             )
             counters["ipc_sent"] += 1
-            delivered = world.ipc.receive(
-                channel_id=world.channel_id,
-                receiver_agent_id="agent-reader",
-                receiver_process_id=world.reader_process_id,
-            )
-            if delivered is not None:
-                if delivered.delivery_attempts > 1:
-                    counters["ipc_redeliveries"] += 1
-                counters["ipc_deliveries"] += 1
-                world.ipc.ack(
+
+            if step == redelivery_step:
+                delivered_before_crash = world.ipc.receive(
                     channel_id=world.channel_id,
-                    message_id=delivered.message_id,
                     receiver_agent_id="agent-reader",
                     receiver_process_id=world.reader_process_id,
                 )
-                counters["ipc_acks"] += 1
-            if message.delivery_state is IPCMessageState.ACKED:
-                counters["unsafe_duplicate_effects"] += 1
+                if delivered_before_crash is None:
+                    counters["recovery_corruptions"] += 1
+                else:
+                    counters["ipc_deliveries"] += 1
+                    counters["crashes"] += 1
+                    world, restart_metrics = _replace_runtime_after_recovery(
+                        world,
+                        current_capability_grants={
+                            "agent-parent": (world.root_grant,),
+                        },
+                    )
+                    recovered_event_total += int(
+                        restart_metrics["recovered_events"]
+                    )
+                    _merge_restart_metrics(counters, restart_metrics)
+                    redelivered = world.ipc.receive(
+                        channel_id=world.channel_id,
+                        receiver_agent_id="agent-reader",
+                        receiver_process_id=world.reader_process_id,
+                    )
+                    if (
+                        redelivered is not None
+                        and redelivered.message_id
+                        == delivered_before_crash.message_id
+                        and redelivered.delivery_attempts
+                        == delivered_before_crash.delivery_attempts + 1
+                    ):
+                        counters["ipc_deliveries"] += 1
+                        counters["ipc_redeliveries"] += 1
+                        world.ipc.ack(
+                            channel_id=world.channel_id,
+                            message_id=redelivered.message_id,
+                            receiver_agent_id="agent-reader",
+                            receiver_process_id=world.reader_process_id,
+                        )
+                        counters["ipc_acks"] += 1
+                    else:
+                        counters["recovery_corruptions"] += 1
+            else:
+                delivered = world.ipc.receive(
+                    channel_id=world.channel_id,
+                    receiver_agent_id="agent-reader",
+                    receiver_process_id=world.reader_process_id,
+                )
+                if delivered is not None:
+                    counters["ipc_deliveries"] += 1
+                    world.ipc.ack(
+                        channel_id=world.channel_id,
+                        message_id=delivered.message_id,
+                        receiver_agent_id="agent-reader",
+                        receiver_process_id=world.reader_process_id,
+                    )
+                    counters["ipc_acks"] += 1
 
             if step % 10 == 0:
                 try:
                     data = world.resources.read(
                         world.handle_uri,
-                        owner=reader_owner,
+                        owner=ResourceOwner("agent-reader", "session-reader"),
                         offset=0,
                         limit=6,
-                        capability_evaluator=reader_evaluator,
+                        capability_evaluator=_agent_evaluator(
+                            world,
+                            "agent-reader",
+                        ),
                     ).data
                     counters["resource_allowed"] += 1
                     resource_bytes_read += len(data)
@@ -197,10 +255,13 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
                 try:
                     world.resources.read(
                         world.handle_uri,
-                        owner=worker_owner,
+                        owner=ResourceOwner("agent-worker", "session-worker"),
                         offset=0,
                         limit=6,
-                        capability_evaluator=worker_evaluator,
+                        capability_evaluator=_agent_evaluator(
+                            world,
+                            "agent-worker",
+                        ),
                     )
                     counters["cross_agent_resource_leaks"] += 1
                     counters["unauthorized_effects"] += 1
@@ -221,7 +282,7 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
                 else:
                     counters["delegation_denies"] += 1
 
-            if step % budget_interval == 0:
+            if step == process_budget_step:
                 counters["process_budget_blocks"] += _budget_block_once(
                     world.scheduler,
                     world.collector,
@@ -229,62 +290,114 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
                     expected_scope="process",
                 )
 
-            if step == max(2, horizon // 3):
+            if step == agent_budget_step:
+                counters["agent_budget_blocks"] += _agent_budget_block_once(world)
+
+            if step == host_budget_step:
+                counters["host_budget_blocks"] += _host_budget_block_once(world)
+
+            if step == child_fault_step:
                 world.scheduler.record_process_fault(
                     world.worker_process_id,
                     "synthetic_child_fault",
                 )
                 counters["child_faults"] += 1
 
-            if step == max(3, (2 * horizon) // 3):
+            if step == cancellation_step:
                 cancelled = world.scheduler.request_cancel_subtree(
                     world.cancel_process_id,
                     reason="synthetic_cancel",
                 )
                 counters["cancellations"] += len(cancelled)
 
-            if step % operation_interval == 0:
+            if step == durable_crash_step:
+                operation_id = f"op-payment-{step}"
                 _append_payment_operation(
                     world.parent_session,
                     agent_id="agent-parent",
-                    operation_id=f"op-payment-{step}",
+                    operation_id=operation_id,
                     call_id=f"call-payment-{step}",
                     turn=counters["durable_operations"] + 1,
                     dispatched=True,
-                    committed=True,
-                    reconcile_status=ReconcileStatus.SUCCEEDED,
+                    committed=False,
                 )
                 counters["durable_operations"] += 1
-                counters["reconciliations"] += 1
-
-            if step % crash_interval == 0:
+                counters["dispatch_before_crash_count"] += 1
+                if operation_id in external_effects:
+                    counters["unsafe_duplicate_effects"] += 1
+                external_effects.add(operation_id)
+                counters["external_effect_count"] = len(external_effects)
                 counters["crashes"] += 1
-                before_counts = _event_counts(world.sessions)
-                try:
-                    result = recover_multi_agent_runtime(
-                        world.sessions,
-                        current_capability_grants={
-                            "agent-parent": (world.root_grant,),
-                        },
-                        resource_store=world.store,
-                        ipc_persistence=world.ipc_persistence,
+                world, restart_metrics = _replace_runtime_after_recovery(
+                    world,
+                    current_capability_grants={"agent-parent": (world.root_grant,)},
+                )
+                recovered_event_total += int(restart_metrics["recovered_events"])
+                _merge_restart_metrics(counters, restart_metrics)
+                obligation = next(
+                    (
+                        item
+                        for item in restart_metrics["durable_obligations"]
+                        if item.operation_id == operation_id
+                    ),
+                    None,
+                )
+                if (
+                    obligation is not None
+                    and obligation.classification
+                    is OperationRecoveryClassification.RECONCILE_REQUIRED
+                ):
+                    counters["reconcile_required_observed"] += 1
+                    _append_payment_reconciliation(
+                        world.parent_session,
+                        operation_id=operation_id,
+                        call_id=f"call-payment-{step}",
+                        turn=counters["durable_operations"],
                     )
-                    counters["recoveries"] += 1
-                    recovered_event_total += sum(
-                        len(session.events) for session in world.sessions
+                    counters["reconciliations"] += 1
+                else:
+                    counters["lost_durable_facts"] += 1
+
+            if step == authority_shrink_step:
+                counters["crashes"] += 1
+                world, restart_metrics = _replace_runtime_after_recovery(
+                    world,
+                    current_capability_grants={"agent-parent": ()},
+                )
+                recovered_event_total += int(restart_metrics["recovered_events"])
+                _merge_restart_metrics(counters, restart_metrics)
+                shrink_allowed = _agent_evaluator(world, "agent-reader").authorize(
+                    AuthorizationRequest(
+                        "agent-reader",
+                        RESOURCE_READ_ACTION,
+                        "artifact://anything",
                     )
-                    if _event_counts(world.sessions) != before_counts:
-                        counters["lost_durable_facts"] += 1
-                    if result.durable_obligations:
-                        counters["unresolved_mandatory_wal"] += len(
-                            result.durable_obligations
-                        )
-                    if result.ipc is None or len(result.ipc.list_messages()) != step:
-                        counters["recovery_corruptions"] += 1
-                    if result.resource_shares is None:
-                        counters["recovery_corruptions"] += 1
-                except Exception:
-                    counters["recovery_corruptions"] += 1
+                ).allowed
+                counters["authority_shrink_events"] += 1
+                if shrink_allowed:
+                    counters["stale_authority_restored"] += 1
+                    counters["authority_escalations"] += 1
+                else:
+                    counters["delegation_denies"] += 1
+                world, restart_metrics = _replace_runtime_after_recovery(
+                    world,
+                    current_capability_grants={"agent-parent": (world.root_grant,)},
+                )
+                recovered_event_total += int(restart_metrics["recovered_events"])
+                _merge_restart_metrics(counters, restart_metrics)
+
+            if step % crash_interval == 0 and step not in {
+                redelivery_step,
+                durable_crash_step,
+                authority_shrink_step,
+            }:
+                counters["crashes"] += 1
+                world, restart_metrics = _replace_runtime_after_recovery(
+                    world,
+                    current_capability_grants={"agent-parent": (world.root_grant,)},
+                )
+                recovered_event_total += int(restart_metrics["recovered_events"])
+                _merge_restart_metrics(counters, restart_metrics)
 
         final_result = recover_multi_agent_runtime(
             world.sessions,
@@ -302,17 +415,46 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
         if final_result.resource_shares is None:
             counters["recovery_corruptions"] += 1
 
+        positive_coverage = (
+            counters["crashes"] > 0
+            and counters["recoveries"] > 0
+            and counters["runtime_restarts"] > 0
+            and counters["runtime_object_replacements_verified"]
+            == counters["runtime_restarts"]
+            and counters["ipc_sent"] > 0
+            and counters["ipc_deliveries"] > 0
+            and counters["ipc_acks"] > 0
+            and counters["ipc_redeliveries"] > 0
+            and counters["resource_allowed"] > 0
+            and counters["resource_denied"] > 0
+            and counters["delegation_allows"] > 0
+            and counters["delegation_denies"] > 0
+            and counters["process_budget_blocks"] > 0
+            and counters["agent_budget_blocks"] > 0
+            and counters["host_budget_blocks"] > 0
+            and counters["child_faults"] > 0
+            and counters["cancellations"] > 0
+            and counters["durable_operations"] > 0
+            and counters["dispatch_before_crash_count"] > 0
+            and counters["reconcile_required_observed"] > 0
+            and counters["reconciliations"] > 0
+            and counters["external_effect_count"] == counters["durable_operations"]
+            and counters["authority_shrink_events"] > 0
+        )
         semantic_success = (
             counters["unauthorized_effects"] == 0
             and counters["unsafe_duplicate_effects"] == 0
             and counters["cross_agent_resource_leaks"] == 0
             and counters["authority_escalations"] == 0
+            and counters["stale_authority_restored"] == 0
             and counters["lost_durable_facts"] == 0
             and counters["recovery_corruptions"] == 0
             and counters["unresolved_mandatory_wal"] == 0
             and counters["ipc_sent"] == horizon
-            and counters["ipc_deliveries"] == horizon
+            and counters["ipc_deliveries"]
+            == horizon + counters["ipc_redeliveries"]
             and counters["ipc_acks"] == horizon
+            and positive_coverage
         )
 
         metrics = {
@@ -321,6 +463,7 @@ def run_long_horizon_multi_agent(horizon: int) -> BenchmarkRecord:
             "requested_horizon": horizon,
             "resource_bytes_read": resource_bytes_read,
             "recovered_events": recovered_event_total,
+            "positive_coverage_passed": positive_coverage,
             "live_ipc_messages": len(final_result.ipc.list_messages())
             if final_result.ipc is not None
             else 0,
@@ -421,6 +564,7 @@ def _m3_capability_delegation_narrowing_case() -> BenchmarkRecord:
     registry = AgentRegistry()
     parent_session = Session("session-parent")
     child_session = Session("session-child")
+    grandchild_session = Session("session-grandchild")
     root_grant = CapabilityGrant(
         "agent-parent",
         RESOURCE_READ_ACTION,
@@ -439,7 +583,13 @@ def _m3_capability_delegation_narrowing_case() -> BenchmarkRecord:
         session=child_session,
         creation_id="create-agent-child",
     )
-    del child
+    grandchild = registry.create_child(
+        parent_agent_id=child.control.agent_id,
+        agent_id="agent-grandchild",
+        session=grandchild_session,
+        creation_id="create-agent-grandchild",
+    )
+    del grandchild
     allowed = registry.delegate_capability(
         DelegateCapabilityRequest(
             "agent-parent",
@@ -450,6 +600,17 @@ def _m3_capability_delegation_narrowing_case() -> BenchmarkRecord:
             delegation_id="delegate-logs",
         ),
         record_session=child_session,
+    )
+    grandchild_allowed = registry.delegate_capability(
+        DelegateCapabilityRequest(
+            "agent-child",
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://project-a/logs/today/**",
+            {"max_bytes": 256},
+            delegation_id="delegate-today-logs",
+        ),
+        record_session=grandchild_session,
     )
     scope_denied = registry.delegate_capability(
         DelegateCapabilityRequest(
@@ -484,8 +645,44 @@ def _m3_capability_delegation_narrowing_case() -> BenchmarkRecord:
         ),
         record=False,
     )
+    grandchild_scope_denied = registry.delegate_capability(
+        DelegateCapabilityRequest(
+            "agent-child",
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://project-a/private/**",
+            {"max_bytes": 256},
+            delegation_id="delegate-grandchild-private",
+        ),
+        record=False,
+    )
+    grandchild_action_denied = registry.delegate_capability(
+        DelegateCapabilityRequest(
+            "agent-child",
+            "agent-grandchild",
+            "resource.write",
+            "artifact://project-a/logs/today/**",
+            {"max_bytes": 256},
+            delegation_id="delegate-grandchild-write",
+        ),
+        record=False,
+    )
+    grandchild_constraint_denied = registry.delegate_capability(
+        DelegateCapabilityRequest(
+            "agent-child",
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://project-a/logs/today/**",
+            {"max_bytes": 2048},
+            delegation_id="delegate-grandchild-too-large",
+        ),
+        record=False,
+    )
     child_evaluator = CapabilityEvaluator(
         registry.get("agent-child").capability_grants
+    )
+    grandchild_evaluator = CapabilityEvaluator(
+        registry.get("agent-grandchild").capability_grants
     )
     child_allowed = child_evaluator.authorize(
         AuthorizationRequest(
@@ -501,24 +698,56 @@ def _m3_capability_delegation_narrowing_case() -> BenchmarkRecord:
             "artifact://project-a/private.txt",
         )
     ).allowed
+    grandchild_scope_allowed = grandchild_evaluator.authorize(
+        AuthorizationRequest(
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://project-a/logs/today/summary.txt",
+        )
+    ).allowed
+    grandchild_parent_bound = not grandchild_evaluator.authorize(
+        AuthorizationRequest(
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://project-a/logs/yesterday/summary.txt",
+        )
+    ).allowed
     success = (
         allowed.allowed
+        and grandchild_allowed.allowed
         and not scope_denied.allowed
         and not action_denied.allowed
         and not constraint_denied.allowed
+        and not grandchild_scope_denied.allowed
+        and not grandchild_action_denied.allowed
+        and not grandchild_constraint_denied.allowed
         and child_allowed
         and child_secret_denied
+        and grandchild_scope_allowed
+        and grandchild_parent_bound
     )
     return _record(
         "M3_capability_delegation_narrowing",
         "child_grant_must_be_narrower_than_parent_authority",
         {
-            "delegation_allows": 1 if allowed.allowed else 0,
+            "delegation_allows": sum(
+                1 for decision in (allowed, grandchild_allowed) if decision.allowed
+            ),
             "delegation_denies": sum(
                 1
-                for decision in (scope_denied, action_denied, constraint_denied)
+                for decision in (
+                    scope_denied,
+                    action_denied,
+                    constraint_denied,
+                    grandchild_scope_denied,
+                    grandchild_action_denied,
+                    grandchild_constraint_denied,
+                )
                 if not decision.allowed
             ),
+            "multi_hop_delegation_depth": 2,
+            "grandchild_scope_allowed": grandchild_scope_allowed,
+            "grandchild_parent_bound": grandchild_parent_bound,
             "child_scope_allowed": child_allowed,
             "child_secret_denied": child_secret_denied,
             "authority_escalations": 0 if success else 1,
@@ -753,6 +982,52 @@ def _m7_fault_cancellation_isolation_case() -> BenchmarkRecord:
 def _m8_integrated_recovery_case() -> BenchmarkRecord:
     with TemporaryDirectory(prefix="agentkernel-runtimebench-v08-m8-") as root:
         world = _create_world(Path(root), prefix="m8")
+        world.ipc.send(
+            channel_id=world.channel_id,
+            sender_process_id=world.parent_process_id,
+            payload={"kind": "acked"},
+            message_id="m8-acked",
+            correlation_id="corr-m8-acked",
+        )
+        received_for_ack = world.ipc.receive(
+            channel_id=world.channel_id,
+            receiver_agent_id="agent-reader",
+            receiver_process_id=world.reader_process_id,
+        )
+        if received_for_ack is not None:
+            world.ipc.ack(
+                channel_id=world.channel_id,
+                message_id=received_for_ack.message_id,
+                receiver_agent_id="agent-reader",
+                receiver_process_id=world.reader_process_id,
+            )
+        world.ipc.send(
+            channel_id=world.channel_id,
+            sender_process_id=world.parent_process_id,
+            payload={"kind": "delivered-unacked"},
+            resource_refs=("res_forged",),
+            message_id="m8-delivered",
+            correlation_id="corr-m8-delivered",
+        )
+        delivered_before_recovery = world.ipc.receive(
+            channel_id=world.channel_id,
+            receiver_agent_id="agent-reader",
+            receiver_process_id=world.reader_process_id,
+        )
+        world.ipc.send(
+            channel_id=world.channel_id,
+            sender_process_id=world.parent_process_id,
+            payload={
+                "kind": "pending",
+                "grant": {
+                    "subject": "agent-reader",
+                    "action": "resource.write",
+                    "resource_scope": ARTIFACT_RESOURCE_SCOPE,
+                },
+            },
+            message_id="m8-pending",
+            correlation_id="corr-m8-pending",
+        )
         _append_payment_operation(
             world.parent_session,
             agent_id="agent-parent",
@@ -770,6 +1045,65 @@ def _m8_integrated_recovery_case() -> BenchmarkRecord:
         )
         after_counts = _event_counts(world.sessions)
         obligation = result.durable_obligations[0] if result.durable_obligations else None
+        recovered_messages = (
+            {message.message_id: message for message in result.ipc.list_messages()}
+            if result.ipc is not None
+            else {}
+        )
+        redelivered = None
+        acked_after_recovery = recovered_messages.get("m8-acked")
+        pending_after_recovery = None
+        if result.ipc is not None:
+            redelivered = result.ipc.receive(
+                channel_id=world.channel_id,
+                receiver_agent_id="agent-reader",
+                receiver_process_id=world.reader_process_id,
+            )
+            if redelivered is not None:
+                result.ipc.ack(
+                    channel_id=world.channel_id,
+                    message_id=redelivered.message_id,
+                    receiver_agent_id="agent-reader",
+                    receiver_process_id=world.reader_process_id,
+                )
+            pending_after_recovery = result.ipc.receive(
+                channel_id=world.channel_id,
+                receiver_agent_id="agent-reader",
+                receiver_process_id=world.reader_process_id,
+            )
+        pending_delivered_after_recovery = (
+            pending_after_recovery is not None
+            and pending_after_recovery.message_id == "m8-pending"
+            and pending_after_recovery.delivery_attempts == 1
+        )
+        unacked_redelivery = (
+            delivered_before_recovery is not None
+            and redelivered is not None
+            and redelivered.message_id == delivered_before_recovery.message_id
+            and redelivered.delivery_attempts
+            == delivered_before_recovery.delivery_attempts + 1
+        )
+        acked_not_redelivered = (
+            acked_after_recovery is not None
+            and acked_after_recovery.delivery_state is IPCMessageState.ACKED
+            and redelivered is not None
+            and redelivered.message_id != acked_after_recovery.message_id
+        )
+        payload_grant_inert = not CapabilityEvaluator(
+            result.agent_registry.get("agent-reader").capability_grants
+        ).authorize(
+            AuthorizationRequest(
+                "agent-reader",
+                "resource.write",
+                "artifact://anything",
+            )
+        ).allowed
+        forged_resource_refs_inert = (
+            result.resource_shares is not None
+            and len(result.resource_shares.shares_for_resource("res_forged"))
+            == 0
+            and len(result.agent_registry.get("agent-reader").capability_grants) == 1
+        )
         states = {process.state for process in result.process_manager.list_processes()}
         success = (
             before_counts == after_counts
@@ -777,6 +1111,12 @@ def _m8_integrated_recovery_case() -> BenchmarkRecord:
             and result.agent_registry.contains("agent-reader")
             and result.resource_shares is not None
             and result.ipc is not None
+            and len(recovered_messages) == 3
+            and pending_delivered_after_recovery
+            and unacked_redelivery
+            and acked_not_redelivered
+            and payload_grant_inert
+            and forged_resource_refs_inert
             and obligation is not None
             and obligation.classification
             is OperationRecoveryClassification.RECONCILE_REQUIRED
@@ -798,7 +1138,20 @@ def _m8_integrated_recovery_case() -> BenchmarkRecord:
                 "ipc_messages_recovered": len(result.ipc.list_messages())
                 if result.ipc is not None
                 else 0,
+                "pending_delivered_after_recovery": 1
+                if pending_delivered_after_recovery
+                else 0,
+                "unacked_redelivery": 1 if unacked_redelivery else 0,
+                "acked_not_redelivered": 1 if acked_not_redelivered else 0,
+                "payload_grant_inert": 1 if payload_grant_inert else 0,
+                "resource_refs_inert": 1 if forged_resource_refs_inert else 0,
                 "durable_obligations": len(result.durable_obligations),
+                "mandatory_wal_obligations_surfaced": len(
+                    result.durable_obligations
+                ),
+                "lost_mandatory_wal_obligations": 0
+                if result.durable_obligations
+                else 1,
                 "reconcile_required": 1
                 if obligation is not None
                 and obligation.classification
@@ -806,9 +1159,7 @@ def _m8_integrated_recovery_case() -> BenchmarkRecord:
                 else 0,
                 "lost_durable_facts": 0 if before_counts == after_counts else 1,
                 "recovery_corruptions": 0 if success else 1,
-                "unresolved_mandatory_wal": 0
-                if result.durable_obligations
-                else 1,
+                "unresolved_mandatory_wal": 0,
                 "success": success,
             },
         )
@@ -817,6 +1168,7 @@ def _m8_integrated_recovery_case() -> BenchmarkRecord:
 def _m9_authority_shrink_after_restart_case() -> BenchmarkRecord:
     parent_session = Session("session-parent")
     child_session = Session("session-child")
+    grandchild_session = Session("session-grandchild")
     root_grant = CapabilityGrant(
         "agent-parent",
         RESOURCE_READ_ACTION,
@@ -835,6 +1187,12 @@ def _m9_authority_shrink_after_restart_case() -> BenchmarkRecord:
         session=child_session,
         creation_id="create-agent-child",
     )
+    grandchild = registry.create_child(
+        parent_agent_id=child.control.agent_id,
+        agent_id="agent-grandchild",
+        session=grandchild_session,
+        creation_id="create-agent-grandchild",
+    )
     manager = ProcessManager(agent_registry=registry)
     parent_process = manager.create_process(
         process_id="process-parent",
@@ -849,6 +1207,13 @@ def _m9_authority_shrink_after_restart_case() -> BenchmarkRecord:
         record_session=child_session,
         creation_id="create-process-child",
     )
+    manager.create_child_process(
+        parent_process_id="process-child",
+        process_id="process-grandchild",
+        agent=grandchild.control,
+        record_session=grandchild_session,
+        creation_id="create-process-grandchild",
+    )
     decision = registry.delegate_capability(
         DelegateCapabilityRequest(
             "agent-parent",
@@ -859,19 +1224,35 @@ def _m9_authority_shrink_after_restart_case() -> BenchmarkRecord:
         ),
         record_session=child_session,
     )
+    grandchild_decision = registry.delegate_capability(
+        DelegateCapabilityRequest(
+            "agent-child",
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://logs/**",
+            delegation_id="delegate-grandchild-logs",
+        ),
+        record_session=grandchild_session,
+    )
     broad_recovery = recover_multi_agent_runtime(
-        (parent_session, child_session),
+        (parent_session, child_session, grandchild_session),
         current_capability_grants={"agent-parent": (root_grant,)},
     )
     shrink_recovery = recover_multi_agent_runtime(
-        (parent_session, child_session),
+        (parent_session, child_session, grandchild_session),
         current_capability_grants={"agent-parent": ()},
     )
     broad_child_grants = broad_recovery.agent_registry.get(
         "agent-child"
     ).capability_grants
+    broad_grandchild_grants = broad_recovery.agent_registry.get(
+        "agent-grandchild"
+    ).capability_grants
     shrink_child_grants = shrink_recovery.agent_registry.get(
         "agent-child"
+    ).capability_grants
+    shrink_grandchild_grants = shrink_recovery.agent_registry.get(
+        "agent-grandchild"
     ).capability_grants
     shrink_allowed = CapabilityEvaluator(shrink_child_grants).authorize(
         AuthorizationRequest(
@@ -880,17 +1261,29 @@ def _m9_authority_shrink_after_restart_case() -> BenchmarkRecord:
             "artifact://anything",
         )
     ).allowed
+    shrink_grandchild_allowed = CapabilityEvaluator(shrink_grandchild_grants).authorize(
+        AuthorizationRequest(
+            "agent-grandchild",
+            RESOURCE_READ_ACTION,
+            "artifact://logs/today.txt",
+        )
+    ).allowed
     historical_facts = sum(
         1
-        for event in child_session.events
+        for session in (child_session, grandchild_session)
+        for event in session.events
         if event.type is EventType.CAPABILITY_DELEGATED
     )
     success = (
         decision.allowed
+        and grandchild_decision.allowed
         and len(broad_child_grants) == 1
+        and len(broad_grandchild_grants) == 1
         and len(shrink_child_grants) == 0
+        and len(shrink_grandchild_grants) == 0
         and not shrink_allowed
-        and historical_facts == 1
+        and not shrink_grandchild_allowed
+        and historical_facts == 2
     )
     return _record(
         "M9_authority_shrink_after_restart",
@@ -898,10 +1291,19 @@ def _m9_authority_shrink_after_restart_case() -> BenchmarkRecord:
         {
             "historical_delegation_facts": historical_facts,
             "broad_restart_child_grants": len(broad_child_grants),
+            "broad_restart_grandchild_grants": len(broad_grandchild_grants),
             "shrink_restart_child_grants": len(shrink_child_grants),
+            "shrink_restart_grandchild_grants": len(shrink_grandchild_grants),
             "shrink_restart_authorized": shrink_allowed,
-            "authority_escalations": 1 if shrink_allowed else 0,
-            "lost_durable_facts": 0 if historical_facts == 1 else 1,
+            "shrink_restart_grandchild_authorized": shrink_grandchild_allowed,
+            "multi_hop_authority_shrink": not shrink_grandchild_allowed,
+            "authority_escalations": 1
+            if shrink_allowed or shrink_grandchild_allowed
+            else 0,
+            "stale_authority_restored": 1
+            if shrink_allowed or shrink_grandchild_allowed
+            else 0,
+            "lost_durable_facts": 0 if historical_facts == 2 else 1,
             "success": success,
         },
     )
@@ -917,6 +1319,7 @@ def _m10_long_horizon_composition_case(
         "unsafe_duplicate_effects",
         "cross_agent_resource_leaks",
         "authority_escalations",
+        "stale_authority_restored",
         "lost_durable_facts",
         "recovery_corruptions",
         "unresolved_mandatory_wal",
@@ -949,6 +1352,13 @@ def _m10_long_horizon_composition_case(
             "requested_logical_steps": sum(horizons),
             "crashes": sum(int(record.metrics["crashes"]) for record in records),
             "recoveries": sum(int(record.metrics["recoveries"]) for record in records),
+            "runtime_restarts": sum(
+                int(record.metrics["runtime_restarts"]) for record in records
+            ),
+            "runtime_object_replacements_verified": sum(
+                int(record.metrics["runtime_object_replacements_verified"])
+                for record in records
+            ),
             "ipc_sent": sum(int(record.metrics["ipc_sent"]) for record in records),
             "ipc_deliveries": sum(
                 int(record.metrics["ipc_deliveries"]) for record in records
@@ -985,14 +1395,163 @@ def _m10_long_horizon_composition_case(
             "durable_operations": sum(
                 int(record.metrics["durable_operations"]) for record in records
             ),
+            "dispatch_before_crash_count": sum(
+                int(record.metrics["dispatch_before_crash_count"])
+                for record in records
+            ),
+            "reconcile_required_observed": sum(
+                int(record.metrics["reconcile_required_observed"])
+                for record in records
+            ),
             "reconciliations": sum(
                 int(record.metrics["reconciliations"]) for record in records
+            ),
+            "external_effect_count": sum(
+                int(record.metrics["external_effect_count"]) for record in records
+            ),
+            "authority_shrink_events": sum(
+                int(record.metrics["authority_shrink_events"]) for record in records
             ),
             **invariants,
             "semantic_invariants_passed": success,
             "success": success,
         },
     )
+
+
+def _replace_runtime_after_recovery(
+    world: _World,
+    *,
+    current_capability_grants: dict[str, tuple[CapabilityGrant, ...]],
+    host_budget: HostBudget | None = None,
+) -> tuple[_World, dict[str, object]]:
+    """Recover fresh runtime objects and return a replacement live world.
+
+    Durable truth remains in Session, IPCPersistence, ResourceStore, and WAL
+    facts. Runtime-only objects are intentionally replaced.
+    """
+
+    pre_registry = world.registry
+    pre_manager = world.manager
+    pre_scheduler = world.scheduler
+    pre_ipc = world.ipc
+    pre_agent_ids = tuple(agent.agent_id for agent in pre_registry.list_agents())
+    pre_process_ids = tuple(
+        process.process_id for process in pre_manager.list_processes()
+    )
+    pre_event_counts = _event_counts(world.sessions)
+    pre_message_count = len(pre_ipc.list_messages())
+    resource_id = _resource_id_from_uri(world.handle_uri)
+    pre_metadata = world.store.stat(resource_id).as_dict()
+
+    restart_budget = host_budget or HostBudget(max_total_tool_calls=100_000)
+    result = recover_multi_agent_runtime(
+        world.sessions,
+        current_capability_grants=current_capability_grants,
+        resource_store=world.store,
+        ipc_persistence=world.ipc_persistence,
+        host_budget=restart_budget,
+    )
+    fresh_collector = UsageCollector(clock=_FakeClock())
+    # The recovery coordinator owns the fresh scheduler. The benchmark Host
+    # attaches fresh runtime-only accounting before continuing the workload.
+    result.scheduler._usage_collector = fresh_collector  # type: ignore[attr-defined]
+
+    resource_shares = result.resource_shares or world.shares
+    ipc = result.ipc or world.ipc
+    resources = ResourceService(
+        world.store,
+        share_registry=resource_shares,
+        resource_id_factory=_IdFactory("res_restart"),
+        handle_id_factory=_IdFactory("hdl_restart"),
+        clock=lambda: 10.0,
+    )
+    replacement = replace(
+        world,
+        registry=result.agent_registry,
+        manager=result.process_manager,
+        scheduler=result.scheduler,
+        collector=fresh_collector,
+        shares=resource_shares,
+        resources=resources,
+        ipc=ipc,
+    )
+
+    post_agent_ids = tuple(
+        agent.agent_id for agent in result.agent_registry.list_agents()
+    )
+    post_process_ids = tuple(
+        process.process_id for process in result.process_manager.list_processes()
+    )
+    post_event_counts = _event_counts(world.sessions)
+    post_metadata = world.store.stat(resource_id).as_dict()
+    object_replaced = (
+        pre_registry is not result.agent_registry
+        and pre_manager is not result.process_manager
+        and pre_scheduler is not result.scheduler
+        and pre_ipc is not ipc
+    )
+    share_preserved = (
+        result.resource_shares is not None
+        and result.resource_shares.is_shared_with(
+            resource_id=resource_id,
+            grantee_agent_id="agent-reader",
+            action=RESOURCE_READ_ACTION,
+        )
+    )
+    ipc_preserved = result.ipc is not None and len(result.ipc.list_messages()) == (
+        pre_message_count
+    )
+
+    return replacement, {
+        "recoveries": 1,
+        "runtime_restarts": 1,
+        "runtime_object_replacements_verified": 1 if object_replaced else 0,
+        "agent_ids_preserved": 1 if pre_agent_ids == post_agent_ids else 0,
+        "process_ids_preserved": 1 if pre_process_ids == post_process_ids else 0,
+        "session_durable_events_preserved": 1
+        if pre_event_counts == post_event_counts
+        else 0,
+        "resource_metadata_preserved": 1 if pre_metadata == post_metadata else 0,
+        "resource_share_preserved": 1 if share_preserved else 0,
+        "ipc_durable_envelopes_preserved": 1 if ipc_preserved else 0,
+        "wal_obligations_preserved": len(result.durable_obligations),
+        "recovered_events": sum(len(session.events) for session in world.sessions),
+        "durable_obligations": result.durable_obligations,
+        "lost_durable_facts": 0 if pre_event_counts == post_event_counts else 1,
+        "recovery_corruptions": 0
+        if object_replaced and share_preserved and ipc_preserved
+        else 1,
+    }
+
+
+def _merge_restart_metrics(
+    counters: dict[str, int],
+    restart_metrics: dict[str, object],
+) -> None:
+    for key in (
+        "recoveries",
+        "runtime_restarts",
+        "runtime_object_replacements_verified",
+        "agent_ids_preserved",
+        "process_ids_preserved",
+        "session_durable_events_preserved",
+        "resource_metadata_preserved",
+        "resource_share_preserved",
+        "ipc_durable_envelopes_preserved",
+        "wal_obligations_preserved",
+        "lost_durable_facts",
+        "recovery_corruptions",
+    ):
+        counters[key] += int(restart_metrics[key])
+
+
+def _agent_evaluator(world: _World, agent_id: str) -> CapabilityEvaluator:
+    return CapabilityEvaluator(world.registry.get(agent_id).capability_grants)
+
+
+def _resource_id_from_uri(uri: str) -> str:
+    return uri.removeprefix("artifact://")
 
 
 def _create_world(root: Path, *, prefix: str) -> _World:
@@ -1261,6 +1820,55 @@ def _append_payment_operation(
         session.append(EventType.TURN_END, {"turn": turn, "reason": "completed"})
 
 
+def _append_payment_reconciliation(
+    session: Session,
+    *,
+    operation_id: str,
+    call_id: str,
+    turn: int,
+) -> None:
+    output = {"ok": True, "operation_id": operation_id}
+    session.append(
+        EventType.TOOL_RECONCILE,
+        {
+            "turn": turn,
+            "step": 1,
+            "operation_id": operation_id,
+            "observed_status": ReconcileStatus.SUCCEEDED.value,
+            "output": output,
+        },
+    )
+    session.append(
+        EventType.TOOL_COMMIT,
+        {
+            "turn": turn,
+            "step": 1,
+            "operation_id": operation_id,
+            "output": output,
+        },
+    )
+    session.append(
+        EventType.TOOL_RESULT,
+        {
+            "turn": turn,
+            "step": 1,
+            **ToolResult.success(
+                ToolCall(
+                    call_id,
+                    "payment.charge",
+                    {"invoice_id": f"invoice-{turn}", "amount_cents": 4200},
+                ),
+                output,
+            ).as_dict(),
+        },
+    )
+    session.append(
+        EventType.STEP_END,
+        {"turn": turn, "step": 1, "outcome": "tool_result"},
+    )
+    session.append(EventType.TURN_END, {"turn": turn, "reason": "completed"})
+
+
 def _authorization_context(agent_id: str) -> dict[str, object]:
     return {
         "agent_id": agent_id,
@@ -1396,6 +2004,60 @@ def _budget_block_once(
         scheduler.unblock(process_id)
         return 1
     return 0
+
+
+def _agent_budget_block_once(world: _World) -> int:
+    process_id = world.worker_process_id
+    world.scheduler.update_agent_budget(
+        "agent-worker",
+        AgentBudget(max_total_tool_calls=1),
+    )
+    _dispatch_if_ready(world.scheduler, process_id)
+    world.collector.record_tool_call(process_id, 2)
+    blocked = 0
+    try:
+        world.scheduler.safe_point(process_id, SchedulerSafePoint.AFTER_TOOL_CALL)
+    except ProcessBudgetExceeded as error:
+        if error.exceeded.scope == "agent":
+            blocked = 1
+    finally:
+        world.collector.reset_process(process_id)
+        world.scheduler.update_agent_budget(
+            "agent-worker",
+            AgentBudget(max_total_tool_calls=None),
+        )
+        if world.scheduler.manager.get(process_id).state is ProcessState.BLOCKED:
+            world.scheduler.unblock(process_id)
+    return blocked
+
+
+def _host_budget_block_once(world: _World) -> int:
+    process_id = world.parent_process_id
+    previous_budget = world.scheduler.host_budget
+    world.scheduler.update_host_budget(HostBudget(max_total_tool_calls=1))
+    _dispatch_if_ready(world.scheduler, process_id)
+    world.collector.record_tool_call(process_id, 2)
+    blocked = 0
+    try:
+        world.scheduler.safe_point(process_id, SchedulerSafePoint.AFTER_TOOL_CALL)
+    except ProcessBudgetExceeded as error:
+        if error.exceeded.scope == "host":
+            blocked = 1
+    finally:
+        world.collector.reset_process(process_id)
+        world.scheduler.update_host_budget(previous_budget)
+        if world.scheduler.manager.get(process_id).state is ProcessState.BLOCKED:
+            world.scheduler.unblock(process_id)
+    return blocked
+
+
+def _dispatch_if_ready(
+    scheduler: CooperativeScheduler,
+    process_id: str,
+) -> None:
+    process = scheduler.manager.get(process_id)
+    if process.state is ProcessState.READY:
+        scheduler.dispatch(process_id)
 
 
 def _event_counts(sessions: tuple[Session, ...]) -> dict[str, int]:

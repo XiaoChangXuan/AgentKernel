@@ -747,7 +747,9 @@ def multi_agent_runtime_record(
         "unsafe_duplicate_effects",
         "cross_agent_resource_leaks",
         "authority_escalations",
+        "stale_authority_restored",
         "lost_durable_facts",
+        "lost_mandatory_wal_obligations",
         "recovery_corruptions",
         "unresolved_mandatory_wal",
     )
@@ -837,8 +839,13 @@ def multi_agent_runtime_record(
             "m10_horizon_1000_pass": bool(_metric(m10, "horizon_1000_pass", False)),
             "logical_steps": int(_metric(m10, "logical_steps", 0)),
             "requested_logical_steps": int(_metric(m10, "requested_logical_steps", 0)),
+            "runtime_restarts": int(_metric(m10, "runtime_restarts", 0)),
+            "runtime_object_replacements_verified": int(
+                _metric(m10, "runtime_object_replacements_verified", 0)
+            ),
             "ipc_sent": int(_metric(m10, "ipc_sent", 0)),
             "ipc_deliveries": int(_metric(m10, "ipc_deliveries", 0)),
+            "ipc_redeliveries": int(_metric(m10, "ipc_redeliveries", 0)),
             "ipc_acks": int(_metric(m10, "ipc_acks", 0)),
             "resource_allowed": sum(
                 int(_metric(record, "resource_allowed", 0)) for record in records
@@ -868,7 +875,21 @@ def multi_agent_runtime_record(
                 int(_metric(record, "cancellations", 0)) for record in records
             ),
             "durable_operations": int(_metric(m10, "durable_operations", 0)),
+            "dispatch_before_crash_count": int(
+                _metric(m10, "dispatch_before_crash_count", 0)
+            ),
+            "reconcile_required_observed": int(
+                _metric(m10, "reconcile_required_observed", 0)
+            ),
             "reconciliations": int(_metric(m10, "reconciliations", 0)),
+            "external_effect_count": int(_metric(m10, "external_effect_count", 0)),
+            "authority_shrink_events": int(
+                _metric(m10, "authority_shrink_events", 0)
+            ),
+            "mandatory_wal_obligations_surfaced": sum(
+                int(_metric(record, "mandatory_wal_obligations_surfaced", 0))
+                for record in records
+            ),
             "semantic_invariants_passed": no_invariant_failures,
             "raw_record_count": len(records),
             **invariant_totals,

@@ -146,7 +146,7 @@ Candidate claims after V0.7:
 | D. Authority does not belong to the LLM | IMPLEMENTED_WITH_SCOPE | AgentKernel enforces current Tool, Resource, and Durable Tool authorization outside model output. It does not yet implement delegation, revocation, namespace, RBAC, or IAM. |
 | E. Agent Execution is governable as a runtime process | PARTIALLY_IMPLEMENTED | AgentKernel has single-agent cooperative Process/Scheduler/Accounting primitives. It does not yet have Process Tree, IPC, preemption, or multi-agent isolation. |
 | F. Kernel mechanisms compose without destroying previous invariants | IMPLEMENTED_WITH_SCOPE | AgentKernel V0.1-V0.7 mechanisms preserved the tested runtime invariants across deterministic single-agent long-horizon fixtures up to 1000 logical steps. |
-| G. Multi-Agent primitives preserve authority and recovery boundaries | IMPLEMENTED_WITH_SCOPE | AgentKernel V0.8 RuntimeBench B8 validates M1-M10 deterministic multi-agent identity, delegation, IPC, resource sharing, budget, fault, and recovery invariants, including 100/500/1000 step M10 profiles. |
+| G. Multi-Agent primitives preserve authority and recovery boundaries | IMPLEMENTED_WITH_SCOPE | AgentKernel V0.8 RuntimeBench B8 validates M1-M10 deterministic multi-agent identity, multi-hop delegation narrowing, IPC redelivery, resource sharing, hierarchical budgets, fault isolation, durable dispatch/crash/reconcile, authority shrink, and recovery invariants, including 100/500/1000 step M10 profiles. |
 
 These claims should be stated as runtime mechanism claims, not product-quality
 or model-quality claims.
@@ -161,7 +161,7 @@ or model-quality claims.
 | Authority does not belong to the LLM | `CapabilityGrant`, `CapabilityEvaluator`, `ToolRegistry`, `ResourceService`, Durable Tool authorization audit. | `benchmarks/results/capability_runtime.json`: unauthorized tool/resource/payment dispatch denied; hidden tool was not model-visible; legacy `required_capability` still works. | IMPLEMENTED_WITH_SCOPE | Do not claim delegation, revocation, namespace normalization, RBAC, IAM, or complete sandboxing. |
 | Agent Execution is governable as a runtime process | `ProcessControlBlock`, `ProcessManager`, `CooperativeScheduler`, safe points, `UsageCollector`, budget checks. | `benchmarks/results/v0.7_runtime.json`: lifecycle, WAITING/BLOCKED/READY, budget blocking, usage accounting, process recovery, and Agent/Process/Session boundary cases passed. | PARTIALLY_IMPLEMENTED | Do not claim preemption, multi-agent scheduling, process tree semantics, IPC, durable accounting ledger, or production fairness. |
 | Kernel mechanisms compose | Scheduler + WAL, Accounting + Capability, Context VM + Resource, Recovery + Process mapping. | `benchmarks/results/runtimebench_v0.7.json`: B6 passes 100, 500, and 1000 step deterministic profiles with 9684 recovered events, 0 duplicate external effects, 0 unauthorized effects, and 3 budget block/recovery cycles. | IMPLEMENTED_WITH_SCOPE | Do not claim production reliability, semantic long-horizon reasoning, multi-agent stability, or scheduler scalability. |
-| Multi-Agent runtime invariants | AgentRegistry, ProcessManager, CooperativeScheduler, delegation narrowing, KernelIPC, ResourceShareRegistry, ResourceService authorization, multi-agent recovery, WAL recovery classification. | `benchmarks/results/runtimebench_v0.8.json`: B8 passes M1-M10, with M10 passing 100, 500, and 1000 step deterministic profiles and zero unauthorized effects, duplicate effects, cross-agent leaks, authority escalations, lost durable facts, recovery corruptions, or unresolved mandatory WAL obligations. | IMPLEMENTED_WITH_SCOPE | Do not claim production sandboxing, distributed runtime correctness, complete revocation, namespace security, RBAC, IAM, memory correctness, or model intelligence improvement. |
+| Multi-Agent runtime invariants | AgentRegistry, ProcessManager, CooperativeScheduler, delegation narrowing, KernelIPC, ResourceShareRegistry, ResourceService authorization, multi-agent recovery, WAL recovery classification. | `benchmarks/results/runtimebench_v0.8.json`: B8 passes M1-M10, with M10 passing 100, 500, and 1000 step deterministic profiles. Hardened evidence includes true runtime object replacement after restart, IPC redelivery, Process/Agent/Host budget blocking, durable dispatch/crash/reconcile, authority shrink, and zero unauthorized effects, duplicate effects, cross-agent leaks, authority escalations, lost durable facts, recovery corruptions, stale authority restoration, or unresolved mandatory WAL obligations. | IMPLEMENTED_WITH_SCOPE | Do not claim production sandboxing, distributed runtime correctness, complete revocation, namespace security, RBAC, IAM, memory correctness, or model intelligence improvement. |
 
 ## 7. RuntimeBench Design
 
@@ -384,8 +384,14 @@ Metrics:
 - cross-agent resource leaks;
 - authority escalations;
 - lost durable facts;
+- lost mandatory WAL obligations;
 - recovery corruptions;
-- unresolved mandatory WAL obligations.
+- unresolved mandatory WAL obligations;
+- runtime restarts and object replacement checks;
+- IPC redeliveries;
+- dispatch-before-crash and reconcile-required observations;
+- process, agent, and host budget blocks;
+- stale authority restoration attempts.
 
 ### B8b Scheduler Scalability
 
