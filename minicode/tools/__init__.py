@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agentkernel.session import Session
+from agentkernel.resources import ResourceService
 from agentkernel.tool_effects import ReconcileResult, ReconcileStatus, ToolEffectKind
 from agentkernel.capabilities import CapabilityGrant, TOOL_EXECUTE_ACTION
 from agentkernel.tools import ToolDefinition, ToolRegistry
@@ -10,17 +11,28 @@ from minicode.workspace import WorkspaceIdentity
 from .apply_patch import apply_patch, apply_patch_handler
 from .list_files import list_files, list_files_handler
 from .read_file import read_file, read_file_handler
+from .run_command import (
+    CommandRunner,
+    DefaultShellHostPolicy,
+    ShellHostPolicy,
+    run_command,
+    run_command_handler,
+)
 from .schemas import (
     APPLY_PATCH_NAME,
     LIST_FILES_NAME,
     READ_FILE_NAME,
+    RUN_COMMAND_NAME,
     SEARCH_FILES_NAME,
+    SHELL_EXECUTE_ACTION,
     WORKSPACE_READ_ACTION,
     WORKSPACE_WRITE_ACTION,
     apply_patch_schema,
     list_files_schema,
     read_file_schema,
+    run_command_schema,
     search_files_schema,
+    shell_scope,
     tool_resource,
     workspace_scope,
 )
@@ -75,12 +87,46 @@ def apply_patch_tool_definition(
     )
 
 
+def run_command_tool_definition(
+    workspace: WorkspaceIdentity,
+    *,
+    resources: ResourceService | None = None,
+    policy: ShellHostPolicy | None = None,
+    runner: CommandRunner | None = None,
+) -> ToolDefinition:
+    return ToolDefinition(
+        schema=run_command_schema(),
+        handler=lambda arguments, context: run_command_handler(
+            workspace,
+            arguments,
+            context,
+            resources=resources,
+            policy=policy,
+            runner=runner,
+        ),
+        required_action=TOOL_EXECUTE_ACTION,
+        required_resource=tool_resource(RUN_COMMAND_NAME),
+    )
+
+
 def minicode_tool_definitions(
     workspace: WorkspaceIdentity,
     *,
     session: Session | None = None,
+    resources: ResourceService | None = None,
+    policy: ShellHostPolicy | None = None,
+    runner: CommandRunner | None = None,
 ) -> tuple[ToolDefinition, ...]:
-    return (*read_only_tool_definitions(workspace), apply_patch_tool_definition(workspace, session=session))
+    return (
+        *read_only_tool_definitions(workspace),
+        apply_patch_tool_definition(workspace, session=session),
+        run_command_tool_definition(
+            workspace,
+            resources=resources,
+            policy=policy,
+            runner=runner,
+        ),
+    )
 
 
 def register_read_only_tools(
@@ -102,13 +148,41 @@ def register_apply_patch_tool(
     return registry
 
 
+def register_run_command_tool(
+    registry: ToolRegistry,
+    workspace: WorkspaceIdentity,
+    *,
+    resources: ResourceService | None = None,
+    policy: ShellHostPolicy | None = None,
+    runner: CommandRunner | None = None,
+) -> ToolRegistry:
+    registry.register(
+        run_command_tool_definition(
+            workspace,
+            resources=resources,
+            policy=policy,
+            runner=runner,
+        )
+    )
+    return registry
+
+
 def register_minicode_tools(
     registry: ToolRegistry,
     workspace: WorkspaceIdentity,
     *,
     session: Session | None = None,
+    resources: ResourceService | None = None,
+    policy: ShellHostPolicy | None = None,
+    runner: CommandRunner | None = None,
 ) -> ToolRegistry:
-    for definition in minicode_tool_definitions(workspace, session=session):
+    for definition in minicode_tool_definitions(
+        workspace,
+        session=session,
+        resources=resources,
+        policy=policy,
+        runner=runner,
+    ):
         registry.register(definition)
     return registry
 
@@ -137,6 +211,17 @@ def apply_patch_capability_grants(
     )
 
 
+def run_command_capability_grants(
+    *,
+    agent_id: str,
+    workspace: WorkspaceIdentity,
+) -> tuple[CapabilityGrant, ...]:
+    return (
+        CapabilityGrant(agent_id, TOOL_EXECUTE_ACTION, tool_resource(RUN_COMMAND_NAME)),
+        CapabilityGrant(agent_id, SHELL_EXECUTE_ACTION, shell_scope(workspace.workspace_id)),
+    )
+
+
 def minicode_capability_grants(
     *,
     agent_id: str,
@@ -145,14 +230,20 @@ def minicode_capability_grants(
     return (
         *read_only_capability_grants(agent_id=agent_id, workspace=workspace),
         *apply_patch_capability_grants(agent_id=agent_id, workspace=workspace),
+        *run_command_capability_grants(agent_id=agent_id, workspace=workspace),
     )
 
 
 __all__ = [
     "APPLY_PATCH_NAME",
+    "CommandRunner",
+    "DefaultShellHostPolicy",
     "LIST_FILES_NAME",
     "READ_FILE_NAME",
+    "RUN_COMMAND_NAME",
     "SEARCH_FILES_NAME",
+    "SHELL_EXECUTE_ACTION",
+    "ShellHostPolicy",
     "WORKSPACE_READ_ACTION",
     "WORKSPACE_WRITE_ACTION",
     "apply_patch",
@@ -167,7 +258,12 @@ __all__ = [
     "register_apply_patch_tool",
     "register_minicode_tools",
     "register_read_only_tools",
+    "register_run_command_tool",
+    "run_command",
+    "run_command_capability_grants",
+    "run_command_tool_definition",
     "search_files",
+    "shell_scope",
     "tool_resource",
     "workspace_scope",
 ]
