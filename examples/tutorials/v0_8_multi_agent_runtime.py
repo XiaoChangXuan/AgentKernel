@@ -243,6 +243,17 @@ async def main() -> None:
     print(f"tool_delegation_allowed={tool_decision.allowed}")
     print(f"child_current_grants={len(agents.get('agent-child').capability_grants)}")
     print(f"after_delegation_result={after.output}")
+    print()
+    print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+    print("- Agent Tree and Process Tree are separate runtime structures.")
+    print("- IPC resource references do not grant authority by themselves.")
+    print("- ResourceShare and narrowed delegation are both required for access.")
+    print("- Child agents do not implicitly inherit parent tool authority.")
+    print()
+    print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+    print("- It does not use a real model provider.")
+    print("- It does not implement V0.9 memory or full namespace security.")
+    print("- It does not prove distributed multi-agent correctness.")
 
 
 if __name__ == "__main__":

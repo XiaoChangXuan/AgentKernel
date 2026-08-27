@@ -19,6 +19,11 @@ def run_tutorial(name: str) -> str:
     return completed.stdout
 
 
+def assert_teaching_footer(output: str) -> None:
+    assert "本实验验证什么 / WHAT THIS DEMONSTRATES" in output
+    assert "本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE" in output
+
+
 def test_v0_1_agent_spine_tutorial_runs() -> None:
     output = run_tutorial("v0_1_agent_spine.py")
 
@@ -26,6 +31,7 @@ def test_v0_1_agent_spine_tutorial_runs() -> None:
     assert "answer=final answer: 42" in output
     assert "tool/call" in output
     assert "tool/result" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_2_recovery_tutorial_runs() -> None:
@@ -34,6 +40,7 @@ def test_v0_2_recovery_tutorial_runs() -> None:
     assert "V0.2 Persistence / Recovery" in output
     assert "after_restart_status=completed" in output
     assert "lost_durable_facts=False" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_3_durable_side_effect_tutorial_runs() -> None:
@@ -44,6 +51,7 @@ def test_v0_3_durable_side_effect_tutorial_runs() -> None:
     assert "reconcile_status=succeeded" in output
     assert "external_effect_count=1" in output
     assert "committed=True" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_4_context_vm_tutorial_runs() -> None:
@@ -54,6 +62,7 @@ def test_v0_4_context_vm_tutorial_runs() -> None:
     assert "evicted_pages=" in output
     assert "model_messages=2" in output
     assert "context_equals_truth=False" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_5_resource_handle_tutorial_runs() -> None:
@@ -64,6 +73,7 @@ def test_v0_5_resource_handle_tutorial_runs() -> None:
     assert "resource_bytes=32000" in output
     assert "has_more=True" in output
     assert "restart_read_success=True" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_6_capability_core_tutorial_runs() -> None:
@@ -75,6 +85,7 @@ def test_v0_6_capability_core_tutorial_runs() -> None:
     assert "allowed_result=42" in output
     assert "denied_ok=False" in output
     assert "matches_eacces=True" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_7_process_runtime_tutorial_runs() -> None:
@@ -85,6 +96,7 @@ def test_v0_7_process_runtime_tutorial_runs() -> None:
     assert "budget_blocked=True" in output
     assert "observed_tokens=6" in output
     assert "after_unblock_state=READY" in output
+    assert_teaching_footer(output)
 
 
 def test_v0_8_multi_agent_runtime_tutorial_runs() -> None:
@@ -104,3 +116,4 @@ def test_v0_8_multi_agent_runtime_tutorial_runs() -> None:
     assert "after_share_and_capability_read='secret-bytes'" in output
     assert "tool_delegation_allowed=True" in output
     assert "after_delegation_result=5" in output
+    assert_teaching_footer(output)

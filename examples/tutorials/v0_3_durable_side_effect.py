@@ -218,6 +218,16 @@ async def main() -> None:
             print(f"final_classification={final.classification.value}")
             print(f"external_effect_count={service.external_effect_count}")
             print(f"committed={final.committed}")
+            print()
+            print("本实验验证什么 / WHAT THIS DEMONSTRATES")
+            print("- WAL records prepare and dispatch before local completion.")
+            print("- Crash after dispatch is classified as reconcile_required.")
+            print("- Reconciliation commits the observed fake external effect once.")
+            print()
+            print("本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE")
+            print("- It does not use a real payment provider.")
+            print("- It does not prove universal exactly-once semantics.")
+            print("- It does not prove arbitrary external-system atomicity.")
         finally:
             restored.close()
 

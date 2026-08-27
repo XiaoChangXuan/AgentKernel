@@ -7,13 +7,41 @@ necessarily current authoritative specifications.
 ## Start Here
 
 1. [Project README](../README.md)
-2. [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
-3. [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md)
-4. [Current Architecture](ARCHITECTURE.md)
-5. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
-6. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
-7. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
-8. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+2. [Interactive labs](../examples/labs/README.md)
+3. [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
+4. [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md)
+5. [Teaching and trace guide](getting-started/TEACHING_AND_TRACE.md)
+6. [Current Architecture](ARCHITECTURE.md)
+7. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+8. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
+9. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
+10. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+
+## Interactive Labs
+
+Open these notebooks directly on GitHub, in VS Code, or in Jupyter. Start with
+the flagship durable-side-effect lab:
+
+```text
+../examples/labs/v0_3_durable_side_effect_lab.ipynb
+```
+
+Then follow the V0.1-V0.8 sequence:
+
+```text
+../examples/labs/v0_1_agent_execution_lab.ipynb
+../examples/labs/v0_2_recovery_lab.ipynb
+../examples/labs/v0_3_durable_side_effect_lab.ipynb
+../examples/labs/v0_4_context_vm_lab.ipynb
+../examples/labs/v0_5_resource_handle_lab.ipynb
+../examples/labs/v0_6_capability_lab.ipynb
+../examples/labs/v0_7_process_runtime_lab.ipynb
+../examples/labs/v0_8_multi_agent_runtime_lab.ipynb
+../examples/labs/real_model_tool_trace_lab.ipynb
+```
+
+The labs are the human-comprehension path. The terminal tutorials below remain
+deterministic smoke/tutorial fixtures and CI-friendly counterparts.
 
 ## Quick Tutorials
 
@@ -35,12 +63,19 @@ reconciliation, Context VM, Resource Handle, Capability enforcement, Process
 Runtime, and Multi-Agent runtime boundaries without real API keys or network
 calls.
 
+Each tutorial prints a short "本实验验证什么 / WHAT THIS DEMONSTRATES" and
+"本实验不证明什么 / WHAT THIS DOES NOT DEMONSTRATE" section so the runnable
+example cannot be mistaken for a real-model evaluation.
+
 ## Canonical Documents
 
 - [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md): problem-driven
   newcomer guide for AgentKernel V0.8.
 - [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md):
   English version of the same onboarding path.
+- [Teaching and trace guide](getting-started/TEACHING_AND_TRACE.md):
+  distinction between deterministic tutorials, RuntimeBench evidence, and
+  opt-in real-model traces.
 - [Current architecture](ARCHITECTURE.md): implemented V0.8 runtime architecture.
 - [V0.8 release review](releases/V0.8_RELEASE_REVIEW.md): release freeze audit,
   claim boundary, evidence provenance, and validation record.
