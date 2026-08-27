@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from agentkernel.session import Session
+from agentkernel.tool_effects import ReconcileResult, ReconcileStatus, ToolEffectKind
 from agentkernel.capabilities import CapabilityGrant, TOOL_EXECUTE_ACTION
 from agentkernel.tools import ToolDefinition, ToolRegistry
 
@@ -48,17 +50,37 @@ def read_only_tool_definitions(workspace: WorkspaceIdentity) -> tuple[ToolDefini
     )
 
 
-def apply_patch_tool_definition(workspace: WorkspaceIdentity) -> ToolDefinition:
+def apply_patch_tool_definition(
+    workspace: WorkspaceIdentity,
+    *,
+    session: Session | None = None,
+) -> ToolDefinition:
+    async def reconcile(context) -> ReconcileResult:  # type: ignore[no-untyped-def]
+        if session is None:
+            return ReconcileResult(
+                ReconcileStatus.UNKNOWN,
+                message="durable patch session is unavailable for reconciliation",
+            )
+        from minicode.durable_patch import durable_apply_patch_reconcile_handler
+
+        return await durable_apply_patch_reconcile_handler(workspace, session, context)
+
     return ToolDefinition(
         schema=apply_patch_schema(),
         handler=lambda arguments, context: apply_patch_handler(workspace, arguments, context),
         required_action=TOOL_EXECUTE_ACTION,
         required_resource=tool_resource(APPLY_PATCH_NAME),
+        effect_kind=ToolEffectKind.RECONCILABLE_MUTATION,
+        reconcile_handler=reconcile,
     )
 
 
-def minicode_tool_definitions(workspace: WorkspaceIdentity) -> tuple[ToolDefinition, ...]:
-    return (*read_only_tool_definitions(workspace), apply_patch_tool_definition(workspace))
+def minicode_tool_definitions(
+    workspace: WorkspaceIdentity,
+    *,
+    session: Session | None = None,
+) -> tuple[ToolDefinition, ...]:
+    return (*read_only_tool_definitions(workspace), apply_patch_tool_definition(workspace, session=session))
 
 
 def register_read_only_tools(
@@ -73,16 +95,20 @@ def register_read_only_tools(
 def register_apply_patch_tool(
     registry: ToolRegistry,
     workspace: WorkspaceIdentity,
+    *,
+    session: Session | None = None,
 ) -> ToolRegistry:
-    registry.register(apply_patch_tool_definition(workspace))
+    registry.register(apply_patch_tool_definition(workspace, session=session))
     return registry
 
 
 def register_minicode_tools(
     registry: ToolRegistry,
     workspace: WorkspaceIdentity,
+    *,
+    session: Session | None = None,
 ) -> ToolRegistry:
-    for definition in minicode_tool_definitions(workspace):
+    for definition in minicode_tool_definitions(workspace, session=session):
         registry.register(definition)
     return registry
 
