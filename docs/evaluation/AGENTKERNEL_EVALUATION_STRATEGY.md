@@ -1,11 +1,11 @@
 # AgentKernel Evaluation Strategy
 
-Status: strategy review updated after V0.7 RuntimeBench B6 evidence freeze.
+Status: strategy review updated after V0.8 Multi-Agent RuntimeBench evidence.
 
 Decision:
 
 ```text
-V0.7_RUNTIMEBENCH_CORE_EVIDENCE_COMPLETE
+V0.8_MULTI_AGENT_RUNTIMEBENCH_EVIDENCE_COMPLETE
 ```
 
 Scope:
@@ -48,12 +48,16 @@ claims:
 - single-agent execution can be represented as a schedulable runtime Process
   with cooperative safe points and observation-based budget blocking;
 - implemented V0.1-V0.7 runtime mechanisms preserve tested invariants across
-  deterministic single-agent long-horizon fixtures up to 1000 logical steps.
+  deterministic single-agent long-horizon fixtures up to 1000 logical steps;
+- implemented V0.8 multi-agent runtime primitives preserve tested identity,
+  delegation, IPC, resource-sharing, budget, fault-isolation, and recovery
+  invariants across deterministic offline fixtures, including 100, 500, and
+  1000 step multi-agent profiles.
 
 The current implementation does not yet justify claims about complete
-multi-agent isolation, delegation, revocation, namespace security, persistent
-memory correctness, production sandboxing, universal exactly-once side effects,
-or superior task intelligence.
+revocation, namespace security, persistent memory correctness, production
+sandboxing, universal exactly-once side effects, distributed multi-agent
+runtime correctness, or superior task intelligence.
 
 The next evaluation step should be RuntimeBench: a versioned benchmark suite
 organized around runtime properties, not ad hoc per-version tests.
@@ -142,6 +146,7 @@ Candidate claims after V0.7:
 | D. Authority does not belong to the LLM | IMPLEMENTED_WITH_SCOPE | AgentKernel enforces current Tool, Resource, and Durable Tool authorization outside model output. It does not yet implement delegation, revocation, namespace, RBAC, or IAM. |
 | E. Agent Execution is governable as a runtime process | PARTIALLY_IMPLEMENTED | AgentKernel has single-agent cooperative Process/Scheduler/Accounting primitives. It does not yet have Process Tree, IPC, preemption, or multi-agent isolation. |
 | F. Kernel mechanisms compose without destroying previous invariants | IMPLEMENTED_WITH_SCOPE | AgentKernel V0.1-V0.7 mechanisms preserved the tested runtime invariants across deterministic single-agent long-horizon fixtures up to 1000 logical steps. |
+| G. Multi-Agent primitives preserve authority and recovery boundaries | IMPLEMENTED_WITH_SCOPE | AgentKernel V0.8 RuntimeBench B8 validates M1-M10 deterministic multi-agent identity, multi-hop delegation narrowing, IPC redelivery, resource sharing, hierarchical budgets, fault isolation, durable dispatch/crash/reconcile, authority shrink, and recovery invariants, including 100/500/1000 step M10 profiles. |
 
 These claims should be stated as runtime mechanism claims, not product-quality
 or model-quality claims.
@@ -156,6 +161,7 @@ or model-quality claims.
 | Authority does not belong to the LLM | `CapabilityGrant`, `CapabilityEvaluator`, `ToolRegistry`, `ResourceService`, Durable Tool authorization audit. | `benchmarks/results/capability_runtime.json`: unauthorized tool/resource/payment dispatch denied; hidden tool was not model-visible; legacy `required_capability` still works. | IMPLEMENTED_WITH_SCOPE | Do not claim delegation, revocation, namespace normalization, RBAC, IAM, or complete sandboxing. |
 | Agent Execution is governable as a runtime process | `ProcessControlBlock`, `ProcessManager`, `CooperativeScheduler`, safe points, `UsageCollector`, budget checks. | `benchmarks/results/v0.7_runtime.json`: lifecycle, WAITING/BLOCKED/READY, budget blocking, usage accounting, process recovery, and Agent/Process/Session boundary cases passed. | PARTIALLY_IMPLEMENTED | Do not claim preemption, multi-agent scheduling, process tree semantics, IPC, durable accounting ledger, or production fairness. |
 | Kernel mechanisms compose | Scheduler + WAL, Accounting + Capability, Context VM + Resource, Recovery + Process mapping. | `benchmarks/results/runtimebench_v0.7.json`: B6 passes 100, 500, and 1000 step deterministic profiles with 9684 recovered events, 0 duplicate external effects, 0 unauthorized effects, and 3 budget block/recovery cycles. | IMPLEMENTED_WITH_SCOPE | Do not claim production reliability, semantic long-horizon reasoning, multi-agent stability, or scheduler scalability. |
+| Multi-Agent runtime invariants | AgentRegistry, ProcessManager, CooperativeScheduler, delegation narrowing, KernelIPC, ResourceShareRegistry, ResourceService authorization, multi-agent recovery, WAL recovery classification. | `benchmarks/results/runtimebench_v0.8.json`: B8 passes M1-M10, with M10 passing 100, 500, and 1000 step deterministic profiles. Hardened evidence includes true runtime object replacement after restart, IPC redelivery, Process/Agent/Host budget blocking, durable dispatch/crash/reconcile, authority shrink, and zero unauthorized effects, duplicate effects, cross-agent leaks, authority escalations, lost durable facts, recovery corruptions, stale authority restoration, or unresolved mandatory WAL obligations. | IMPLEMENTED_WITH_SCOPE | Do not claim production sandboxing, distributed runtime correctness, complete revocation, namespace security, RBAC, IAM, memory correctness, or model intelligence improvement. |
 
 ## 7. RuntimeBench Design
 
@@ -351,7 +357,43 @@ Metrics:
 - unauthorized ownership mutation attempts;
 - boundary regression count.
 
-### B8 Scheduler Scalability
+### B8 Multi-Agent Runtime
+
+Purpose: verify that V0.8 multi-agent runtime primitives preserve Kernel
+object boundaries under local deterministic pressure.
+
+Cases:
+
+- Agent / Process identity isolation;
+- Agent tree / Process tree separation;
+- Capability delegation narrowing;
+- IPC delivery / authority isolation;
+- Resource sharing isolation;
+- hierarchical budget isolation;
+- fault / cancellation isolation;
+- integrated multi-agent recovery;
+- authority shrink after restart;
+- long-horizon multi-agent composition at 100, 500, and 1000 logical steps.
+
+Metrics:
+
+- scenario pass count;
+- horizon pass count;
+- unauthorized effects;
+- unsafe duplicate effects;
+- cross-agent resource leaks;
+- authority escalations;
+- lost durable facts;
+- lost mandatory WAL obligations;
+- recovery corruptions;
+- unresolved mandatory WAL obligations;
+- runtime restarts and object replacement checks;
+- IPC redeliveries;
+- dispatch-before-crash and reconcile-required observations;
+- process, agent, and host budget blocks;
+- stale authority restoration attempts.
+
+### B8b Scheduler Scalability
 
 Purpose: micro/stress benchmark for scheduler data structures.
 
@@ -380,7 +422,7 @@ claim by itself.
 | Context VM benchmark | KEEP + EXTEND/REWRITE | Current fixture demonstrates tokens/correctness/recovery, but the future benchmark should separate context efficiency from truth preservation more explicitly. | Fold into B3 and B6 with truncation, summary, semantic summary, retrieval, replacement, Context VM, and Resource Handle variants. |
 | Capability benchmark | KEEP + EXTEND | Current runtime denial cases validate Kernel authority at Tool, Resource, and Durable boundaries. | Add prompt/tool-output injection fixtures and false-deny measurement. Defer delegation/confused-deputy cases to V0.8. |
 | V0.7 scheduler/accounting benchmark | KEEP | It validates lifecycle, registries, budget blocking, usage snapshots, recovery mapping, and boundary isolation. | Treat scheduler scalability as micro/stress only. Extend B5/B7/B6 for runtime governance. |
-| Queue throughput / 1000 process scheduling | MICROBENCH_ONLY | It can show scheduler data structure cost, but not AgentKernel's core runtime value. | Keep under B8, not as headline research evidence. |
+| Queue throughput / 1000 process scheduling | MICROBENCH_ONLY | It can show scheduler data structure cost, but not AgentKernel's core runtime value. | Keep as a future scheduler microbenchmark, not as headline research evidence. |
 
 ## 8. Metrics
 
@@ -551,15 +593,21 @@ Expected mechanisms:
 - resource sharing rules;
 - namespace or logical isolation view.
 
-New benchmark cases:
+Implemented RuntimeBench B8 cases:
 
 - parent creates child with reduced privilege;
 - child cannot amplify action/scope/constraint;
 - child crash does not corrupt parent Session truth;
 - IPC message cannot carry unauthorized authority;
-- confused deputy attempt through shared resource/tool;
 - budget overrun in one child does not consume sibling budget;
 - shared resource read/write rules remain enforced.
+
+Current evidence:
+
+- `benchmarks/results/runtimebench_v0.8.json`
+- B8 passes M1-M10.
+- M10 passes 100, 500, and 1000 logical step profiles.
+- Required invariant counters remain zero.
 
 V0.8 should compare against multi-agent baselines such as AutoGen only where the
 same task, model, tool, and failure scenario can be made fair.
@@ -632,7 +680,8 @@ Do not claim:
 - AgentKernel provides production sandbox security.
 - AgentKernel has complete namespaces, delegation, revocation, RBAC, IAM, or a
   full policy engine.
-- AgentKernel has complete multi-agent isolation.
+- AgentKernel has complete multi-agent isolation beyond the V0.8 deterministic
+  local RuntimeBench invariants.
 - AgentKernel has persistent memory correctness.
 - AgentKernel's Context VM is infinite context or lossless memory.
 - AgentKernel's Resource Layer is a full VFS, RAG system, search engine, or GC
@@ -645,9 +694,9 @@ Allowed current framing:
 
 ```text
 AgentKernel currently demonstrates a small trusted runtime kernel whose
-single-agent mechanisms can preserve selected runtime invariants under
-deterministic offline crash, context, resource, capability, and scheduling
-fixtures.
+single-agent and scoped multi-agent mechanisms can preserve selected runtime
+invariants under deterministic offline crash, context, resource, capability,
+scheduling, IPC, delegation, and recovery fixtures.
 ```
 
 ## 18. Final Evaluation Strategy Decision
@@ -655,18 +704,19 @@ fixtures.
 Decision:
 
 ```text
-V0.7_RUNTIMEBENCH_CORE_EVIDENCE_COMPLETE
+V0.8_MULTI_AGENT_RUNTIMEBENCH_EVIDENCE_COMPLETE
 ```
 
 Rationale:
 
 - The core AgentKernel positioning is coherent: small trusted runtime kernel,
   not general Agent Framework.
-- V0.1-V0.7 already provide implemented mechanisms and real offline evidence
+- V0.1-V0.8 already provide implemented mechanisms and real offline evidence
   for several runtime claims.
-- Current evidence is strong enough to support scoped V0.7 single-agent
-  RuntimeBench claims, but not production, semantic long-horizon reasoning,
-  multi-agent, scalability, or cross-product superiority claims.
+- Current evidence is strong enough to support scoped V0.8 single-agent and
+  deterministic local multi-agent RuntimeBench claims, but not production,
+  semantic long-horizon reasoning, distributed runtime, memory, or cross-product
+  superiority claims.
 - RuntimeBench should be versioned by runtime property families B1 through B8,
   with V0.7 proving single-agent invariants, V0.8 adding multi-agent isolation,
   V0.9 adding persistent memory correctness, and V1.0 combining them into a
@@ -675,5 +725,5 @@ Rationale:
 Immediate next step:
 
 ```text
-Complete V0.7 release freeze without entering V0.8 implementation.
+Complete V0.8 evidence freeze without entering Phase 9 implementation.
 ```

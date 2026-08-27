@@ -1,4 +1,4 @@
-"""Unified RuntimeBench V0.7 runner."""
+"""Unified RuntimeBench V0.8 runner."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from benchmarks.common.reporter import RESULTS_DIR
-from benchmarks.runtimebench.adapters import run_v0_7_families
+from benchmarks.runtimebench.adapters import run_v0_8_families
 from benchmarks.runtimebench.environment import (
     collect_environment,
     current_commit,
@@ -16,7 +16,7 @@ from benchmarks.runtimebench.environment import (
 from benchmarks.runtimebench.schema import RuntimeBenchDocument
 
 
-DEFAULT_OUTPUT = RESULTS_DIR / "runtimebench_v0.7.json"
+DEFAULT_OUTPUT = RESULTS_DIR / "runtimebench_v0.8.json"
 
 
 def run_runtimebench() -> RuntimeBenchDocument:
@@ -24,7 +24,7 @@ def run_runtimebench() -> RuntimeBenchDocument:
         commit=current_commit(),
         generated_at=generated_at(),
         environment=collect_environment(),
-        benchmarks=run_v0_7_families(),
+        benchmarks=run_v0_8_families(),
     )
 
 

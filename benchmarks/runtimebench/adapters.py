@@ -41,12 +41,17 @@ from benchmarks.runtimebench.fixtures import (
     context_truth_fixture,
     crash_fixture,
     long_horizon_fixture,
+    multi_agent_runtime_fixture,
     resource_governance_fixture,
     side_effect_fixture,
 )
 from benchmarks.runtimebench.long_horizon import (
     LONG_HORIZON_PROFILES,
     run_long_horizon_profiles,
+)
+from benchmarks.runtimebench.multi_agent import (
+    MULTI_AGENT_HORIZONS,
+    run_multi_agent_runtime_records,
 )
 from benchmarks.runtimebench.schema import (
     BaselineSpec,
@@ -69,6 +74,15 @@ def run_v0_7_families() -> list[RuntimeBenchRecord]:
         resource_governance_record(),
         long_horizon_runtime_stability_record(),
         boundary_isolation_record(),
+    ]
+
+
+def run_v0_8_families() -> list[RuntimeBenchRecord]:
+    """Run RuntimeBench V0.8 families, including multi-agent evidence."""
+
+    return [
+        *run_v0_7_families(),
+        multi_agent_runtime_record(),
     ]
 
 
@@ -716,6 +730,183 @@ def boundary_isolation_record() -> RuntimeBenchRecord:
             "does not test delegation, namespace, IPC, or memory",
             "ResourceStore boundary is checked through ResourceService denial",
             "context projection checks do not measure semantic answer quality",
+        ),
+        raw_records=_raw_dicts(records),
+    )
+
+
+def multi_agent_runtime_record(
+    horizons: Iterable[int] = MULTI_AGENT_HORIZONS,
+) -> RuntimeBenchRecord:
+    records = run_multi_agent_runtime_records(horizons)
+    scenario_pass_count = sum(1 for record in records if _success(record))
+    scenario_success = scenario_pass_count == len(records)
+    m10 = _find(records, "M10_long_horizon_multi_agent_composition", case=True)
+    invariant_keys = (
+        "unauthorized_effects",
+        "unsafe_duplicate_effects",
+        "cross_agent_resource_leaks",
+        "authority_escalations",
+        "stale_authority_restored",
+        "lost_durable_facts",
+        "lost_mandatory_wal_obligations",
+        "recovery_corruptions",
+        "unresolved_mandatory_wal",
+    )
+    invariant_totals = {
+        key: sum(int(_metric(record, key, 0)) for record in records)
+        for key in invariant_keys
+    }
+    no_invariant_failures = all(value == 0 for value in invariant_totals.values())
+    success = scenario_success and no_invariant_failures
+
+    return RuntimeBenchRecord(
+        benchmark_id="B8_multi_agent_runtime",
+        category="multi_agent_runtime",
+        description=(
+            "Multi-agent runtime invariant evidence for Agent, Process, Session, "
+            "Delegation, IPC, Resource sharing, budgets, recovery, and "
+            "long-horizon composition."
+        ),
+        fixture=multi_agent_runtime_fixture(),
+        mechanism_under_test=(
+            "AgentRegistry",
+            "ProcessManager",
+            "CooperativeScheduler",
+            "Capability delegation narrowing",
+            "KernelIPC",
+            "ResourceShareRegistry",
+            "ResourceService authorization",
+            "UsageCollector",
+            "Multi-agent recovery",
+            "Durable WAL recovery classification",
+        ),
+        baseline=BaselineSpec(
+            name="collapsed_multi_agent_loop_state",
+            type="conceptual_internal_baseline",
+            description=(
+                "A multi-agent loop where agent identity, process lifecycle, "
+                "message delivery, resource sharing, and durable recovery are "
+                "not separate kernel-managed objects."
+            ),
+        ),
+        failure_injection=FailureInjectionSpec(
+            enabled=True,
+            point=(
+                "child_faults_cancellation_budget_pressure_ipc_redelivery_"
+                "durable_dispatch_crash_restart"
+            ),
+            description=(
+                "The fixture exercises denied delegation, denied resource "
+                "access, child failure, subtree cancellation, budget blocking, "
+                "IPC delivery, durable operation recovery, and repeated "
+                "multi-agent recovery checkpoints."
+            ),
+        ),
+        metrics={
+            "scenario_count": len(records),
+            "scenario_pass_count": scenario_pass_count,
+            "m1_pass": _success(
+                _find(records, "M1_agent_process_identity_isolation", case=True)
+            ),
+            "m2_pass": _success(
+                _find(records, "M2_agent_tree_process_tree_separation", case=True)
+            ),
+            "m3_pass": _success(
+                _find(records, "M3_capability_delegation_narrowing", case=True)
+            ),
+            "m4_pass": _success(
+                _find(records, "M4_ipc_delivery_authority_isolation", case=True)
+            ),
+            "m5_pass": _success(
+                _find(records, "M5_resource_sharing_isolation", case=True)
+            ),
+            "m6_pass": _success(
+                _find(records, "M6_hierarchical_budget_isolation", case=True)
+            ),
+            "m7_pass": _success(
+                _find(records, "M7_fault_cancellation_isolation", case=True)
+            ),
+            "m8_pass": _success(
+                _find(records, "M8_integrated_multi_agent_recovery", case=True)
+            ),
+            "m9_pass": _success(
+                _find(records, "M9_authority_shrink_after_restart", case=True)
+            ),
+            "m10_pass": _success(m10),
+            "m10_horizon_100_pass": bool(_metric(m10, "horizon_100_pass", False)),
+            "m10_horizon_500_pass": bool(_metric(m10, "horizon_500_pass", False)),
+            "m10_horizon_1000_pass": bool(_metric(m10, "horizon_1000_pass", False)),
+            "logical_steps": int(_metric(m10, "logical_steps", 0)),
+            "requested_logical_steps": int(_metric(m10, "requested_logical_steps", 0)),
+            "runtime_restarts": int(_metric(m10, "runtime_restarts", 0)),
+            "runtime_object_replacements_verified": int(
+                _metric(m10, "runtime_object_replacements_verified", 0)
+            ),
+            "ipc_sent": int(_metric(m10, "ipc_sent", 0)),
+            "ipc_deliveries": int(_metric(m10, "ipc_deliveries", 0)),
+            "ipc_redeliveries": int(_metric(m10, "ipc_redeliveries", 0)),
+            "ipc_acks": int(_metric(m10, "ipc_acks", 0)),
+            "resource_allowed": sum(
+                int(_metric(record, "resource_allowed", 0)) for record in records
+            ),
+            "resource_denied": sum(
+                int(_metric(record, "resource_denied", 0)) for record in records
+            ),
+            "delegation_allows": sum(
+                int(_metric(record, "delegation_allows", 0)) for record in records
+            ),
+            "delegation_denies": sum(
+                int(_metric(record, "delegation_denies", 0)) for record in records
+            ),
+            "process_budget_blocks": sum(
+                int(_metric(record, "process_budget_blocks", 0)) for record in records
+            ),
+            "agent_budget_blocks": sum(
+                int(_metric(record, "agent_budget_blocks", 0)) for record in records
+            ),
+            "host_budget_blocks": sum(
+                int(_metric(record, "host_budget_blocks", 0)) for record in records
+            ),
+            "child_faults": sum(
+                int(_metric(record, "child_faults", 0)) for record in records
+            ),
+            "cancellations": sum(
+                int(_metric(record, "cancellations", 0)) for record in records
+            ),
+            "durable_operations": int(_metric(m10, "durable_operations", 0)),
+            "dispatch_before_crash_count": int(
+                _metric(m10, "dispatch_before_crash_count", 0)
+            ),
+            "reconcile_required_observed": int(
+                _metric(m10, "reconcile_required_observed", 0)
+            ),
+            "reconciliations": int(_metric(m10, "reconciliations", 0)),
+            "external_effect_count": int(_metric(m10, "external_effect_count", 0)),
+            "authority_shrink_events": int(
+                _metric(m10, "authority_shrink_events", 0)
+            ),
+            "mandatory_wal_obligations_surfaced": sum(
+                int(_metric(record, "mandatory_wal_obligations_surfaced", 0))
+                for record in records
+            ),
+            "semantic_invariants_passed": no_invariant_failures,
+            "raw_record_count": len(records),
+            **invariant_totals,
+        },
+        result=ResultSpec(
+            status=status_for(success),
+            oracle=(
+                "m1_to_m10_pass_without_unauthorized_effects_duplicate_effects_"
+                "cross_agent_leaks_authority_escalation_or_recovery_corruption"
+            ),
+        ),
+        success=success,
+        limitations=(
+            "deterministic synthetic local fixture",
+            "no distributed runtime or production sandboxing",
+            "does not implement revocation, namespace, RBAC, IAM, or memory",
+            "long-horizon profile measures runtime invariants, not model intelligence",
         ),
         raw_records=_raw_dicts(records),
     )
