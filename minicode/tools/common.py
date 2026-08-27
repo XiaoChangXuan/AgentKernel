@@ -14,6 +14,7 @@ from minicode.workspace import WorkspaceIdentity
 from .schemas import (
     DEFAULT_IGNORED_NAMES,
     WORKSPACE_READ_ACTION,
+    WORKSPACE_WRITE_ACTION,
     workspace_resource,
 )
 
@@ -77,6 +78,26 @@ def require_workspace_read(
         AuthorizationRequest(
             agent_id=context.agent_id,
             action=WORKSPACE_READ_ACTION,
+            resource=workspace_resource(workspace.workspace_id, relative_path),
+        )
+    )
+    if not decision.allowed:
+        raise ToolExecutionError(ErrorCode.EACCES, decision.reason)
+
+
+def require_workspace_write(
+    *,
+    workspace: WorkspaceIdentity,
+    relative_path: str,
+    context: ToolExecutionContext,
+) -> None:
+    evaluator = context.capability_evaluator
+    if evaluator is None:
+        raise ToolExecutionError(ErrorCode.EACCES, "workspace write authorization unavailable")
+    decision = evaluator.authorize(
+        AuthorizationRequest(
+            agent_id=context.agent_id,
+            action=WORKSPACE_WRITE_ACTION,
             resource=workspace_resource(workspace.workspace_id, relative_path),
         )
     )

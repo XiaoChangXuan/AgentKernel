@@ -22,6 +22,7 @@ def test_list_files_root_listing_hides_default_ignored_entries(tmp_path):
         "AGENTS.md",
         "binary.dat",
         "calculator.py",
+        "crlf.txt",
         "latin1.txt",
         "nested",
         "src",
