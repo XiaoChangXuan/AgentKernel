@@ -7,14 +7,33 @@ necessarily current authoritative specifications.
 ## Start Here
 
 1. [Project README](../README.md)
-2. [Current Architecture](ARCHITECTURE.md)
-3. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
-4. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
+2. [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
+3. [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md)
+4. [Current Architecture](ARCHITECTURE.md)
 5. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
-6. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+6. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
+7. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
+8. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+
+## Quick Tutorials
+
+Run these from the repository root:
+
+```bash
+python examples/tutorials/v0_1_agent_spine.py
+python examples/tutorials/v0_2_recovery.py
+python examples/tutorials/v0_3_durable_side_effect.py
+```
+
+They introduce the runtime spine, durable Session recovery, and Durable Tool WAL
+reconciliation without real API keys or network calls.
 
 ## Canonical Documents
 
+- [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md): problem-driven
+  newcomer guide for AgentKernel V0.8.
+- [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md):
+  English version of the same onboarding path.
 - [Current architecture](ARCHITECTURE.md): implemented V0.8 runtime architecture.
 - [V0.8 release review](releases/V0.8_RELEASE_REVIEW.md): release freeze audit,
   claim boundary, evidence provenance, and validation record.
@@ -86,6 +105,7 @@ without checking the canonical documents above.
 
 - [Agent Runtime Positioning Review](research/AGENT_RUNTIME_POSITIONING_REVIEW.md)
 - [Agent Runtime Comparison](research/AGENT_RUNTIME_COMPARISON.md)
+- [Agent Runtime Design Comparison](research/AGENT_RUNTIME_DESIGN_COMPARISON.md)
 - [Agent Runtime Benchmark Design](research/AGENT_RUNTIME_BENCHMARK_DESIGN.md)
 - [Architecture Review After V0.5](research/ARCHITECTURE_REVIEW_AFTER_V0_5.md)
 - [Context Compaction Research](research/CONTEXT_COMPACTION_RESEARCH.md)
