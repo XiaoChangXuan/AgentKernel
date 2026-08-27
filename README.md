@@ -201,7 +201,7 @@ The V0.8 alpha evidence supports only scoped runtime-mechanism claims:
   operations.
 - Scheduler and Accounting can block process execution at cooperative safe
   points when configured budgets are exceeded.
-- V0.1-V0.7 runtime mechanisms preserve tested invariants in deterministic
+- V0.1-V0.8 runtime mechanisms preserve tested invariants in deterministic
   single-agent workloads up to 1000 logical steps.
 - V0.8 multi-agent mechanisms preserve tested identity, delegation, IPC,
   resource sharing, budget, fault, cancellation, and recovery invariants in
