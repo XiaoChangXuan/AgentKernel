@@ -7,14 +7,41 @@ necessarily current authoritative specifications.
 ## Start Here
 
 1. [Project README](../README.md)
-2. [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
-3. [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md)
-4. [Teaching and trace guide](getting-started/TEACHING_AND_TRACE.md)
-5. [Current Architecture](ARCHITECTURE.md)
-6. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
-7. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
-8. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
-9. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+2. [Interactive labs](../examples/labs/README.md)
+3. [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
+4. [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md)
+5. [Teaching and trace guide](getting-started/TEACHING_AND_TRACE.md)
+6. [Current Architecture](ARCHITECTURE.md)
+7. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+8. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
+9. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
+10. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+
+## Interactive Labs
+
+Open these notebooks directly on GitHub, in VS Code, or in Jupyter. Start with
+the flagship durable-side-effect lab:
+
+```text
+../examples/labs/v0_3_durable_side_effect_lab.ipynb
+```
+
+Then follow the V0.1-V0.8 sequence:
+
+```text
+../examples/labs/v0_1_agent_execution_lab.ipynb
+../examples/labs/v0_2_recovery_lab.ipynb
+../examples/labs/v0_3_durable_side_effect_lab.ipynb
+../examples/labs/v0_4_context_vm_lab.ipynb
+../examples/labs/v0_5_resource_handle_lab.ipynb
+../examples/labs/v0_6_capability_lab.ipynb
+../examples/labs/v0_7_process_runtime_lab.ipynb
+../examples/labs/v0_8_multi_agent_runtime_lab.ipynb
+../examples/labs/real_model_tool_trace_lab.ipynb
+```
+
+The labs are the human-comprehension path. The terminal tutorials below remain
+deterministic smoke/tutorial fixtures and CI-friendly counterparts.
 
 ## Quick Tutorials
 

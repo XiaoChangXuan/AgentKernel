@@ -56,15 +56,31 @@ PREPARE -> DISPATCH -> COMMIT / RECONCILE
 
 如果 crash 发生在 dispatch 后 commit 前，恢复流程要求 reconcile，而不是直接 retry。
 
-## 我应该先运行哪个 demo？
+## 我应该先打开哪个 demo？
 
-如果你第一次看这个仓库，建议先运行一个 human-readable deterministic tutorial：
+如果你第一次看这个仓库，建议先打开 Interactive Lab：
+
+```text
+examples/labs/v0_3_durable_side_effect_lab.ipynb
+```
+
+它是 flagship lab，会一步一步展示 fake payment 在
+`dispatch -> crash -> restart -> reconcile` 下为什么不能 blind retry。
+
+如果你更想从最小执行骨架开始，可以打开：
+
+```text
+examples/labs/v0_1_agent_execution_lab.ipynb
+```
+
+这些 notebooks 可以直接在 GitHub / VS Code 中阅读，也可以用 Jupyter
+逐 cell 执行。Jupyter 是可选教学工具，不是 AgentKernel runtime 依赖。
+
+对应的 deterministic tutorial scripts 仍然保留，适合命令行 smoke test 和 CI：
 
 ```bash
 python examples/tutorials/v0_3_durable_side_effect.py
 ```
-
-它会展示一个 fake payment 在 `dispatch -> crash -> restart -> reconcile` 下如何避免重复外部副作用。
 
 也可以从最小 Agent spine 开始：
 
@@ -109,13 +125,30 @@ V0.8 不是生产安全沙箱，不是 IAM/RBAC，不是分布式一致性系统
 ## 推荐学习路径
 
 1. 先看上面的 payment crash failure scenario。
-2. 运行一个 deterministic tutorial：
+2. 打开 flagship Interactive Lab：
+
+```text
+examples/labs/v0_3_durable_side_effect_lab.ipynb
+```
+
+3. 按 V0.1-V0.8 逐个阅读 / 执行 Interactive Labs：
+
+```text
+examples/labs/v0_1_agent_execution_lab.ipynb
+examples/labs/v0_2_recovery_lab.ipynb
+examples/labs/v0_3_durable_side_effect_lab.ipynb
+examples/labs/v0_4_context_vm_lab.ipynb
+examples/labs/v0_5_resource_handle_lab.ipynb
+examples/labs/v0_6_capability_lab.ipynb
+examples/labs/v0_7_process_runtime_lab.ipynb
+examples/labs/v0_8_multi_agent_runtime_lab.ipynb
+```
+
+4. 用 deterministic tutorial scripts 作为 CI-friendly counterpart：
 
 ```bash
 python examples/tutorials/v0_3_durable_side_effect.py
 ```
-
-3. 按版本理解 V0.1-V0.8 的问题演化：
 
 ```bash
 python examples/tutorials/v0_1_agent_spine.py
@@ -128,13 +161,17 @@ python examples/tutorials/v0_7_process_runtime.py
 python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
-4. 如果配置了真实模型，运行 real-model trace，看真实 provider 如何穿过 AgentKernel boundary：
+5. 如果配置了真实模型，打开 optional real-model lab 或运行 real-model trace，看真实 provider 如何穿过 AgentKernel boundary：
+
+```text
+examples/labs/real_model_tool_trace_lab.ipynb
+```
 
 ```bash
 python examples/real_agent/basic_tool_trace.py
 ```
 
-5. 再阅读架构文档：
+6. 再阅读架构文档：
 
 - [中文新人指南](docs/getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
 - [English newcomer guide](docs/getting-started/AGENTKERNEL_GUIDE.en.md)
@@ -143,17 +180,20 @@ python examples/real_agent/basic_tool_trace.py
 - [RuntimeBench evidence](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
 - [V0.8 release review](docs/releases/V0.8_RELEASE_REVIEW.md)
 
-6. 后续再看 MiniCode reference CodeAgent 和 IntegrationBench。
+7. 后续再看 MiniCode reference CodeAgent 和 IntegrationBench。
 
-## Deterministic Tutorials vs RuntimeBench vs Real Model Trace
+## Interactive Labs vs Deterministic Tutorials vs RuntimeBench vs Real Model Trace
 
 | 类型 | 目的 | 是否调用真实 API | 是否进入强制 CI |
 | --- | --- | --- | --- |
+| Interactive Lab | 人读得懂的逐步实验 | V0.1-V0.8 否；real-model lab opt-in | Notebook JSON / deterministic execution 轻量验证 |
 | Deterministic Tutorial | 教学 fixture + Kernel semantics | 否 | 是，作为可执行教程验证 |
 | RuntimeBench | release runtime invariants | 否 | 是 |
 | Real Model Trace Demo | real provider integration + AgentKernel application flow | 是，但必须 opt-in | 否 |
 
-Tutorial 和 RuntimeBench 使用 deterministic offline fixtures。它们能验证精确 runtime semantics，但不能证明模型智能、生产可靠性、生产安全性或 benchmark superiority。
+Interactive Labs、Tutorial 和 RuntimeBench 使用 deterministic offline fixtures
+时能验证精确 runtime semantics，但不能证明模型智能、生产可靠性、生产安全性或
+benchmark superiority。
 
 Real Model Trace 只能说明：
 

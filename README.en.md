@@ -152,6 +152,34 @@ offline profiles at 100, 500, and 1000 logical steps.
 Python 3.11 or newer is required. The runtime has no required third-party
 dependencies for basic examples.
 
+If you are new to AgentKernel, start with the Interactive Labs instead of the
+terminal scripts:
+
+```text
+examples/labs/v0_3_durable_side_effect_lab.ipynb
+```
+
+This flagship lab shows why `Recovery != Retry` for a fake payment that
+succeeds externally and crashes before local commit.
+
+Then walk through the V0.1-V0.8 labs:
+
+```text
+examples/labs/v0_1_agent_execution_lab.ipynb
+examples/labs/v0_2_recovery_lab.ipynb
+examples/labs/v0_3_durable_side_effect_lab.ipynb
+examples/labs/v0_4_context_vm_lab.ipynb
+examples/labs/v0_5_resource_handle_lab.ipynb
+examples/labs/v0_6_capability_lab.ipynb
+examples/labs/v0_7_process_runtime_lab.ipynb
+examples/labs/v0_8_multi_agent_runtime_lab.ipynb
+```
+
+The notebooks render on GitHub and can be executed cell by cell in Jupyter or
+VS Code. Jupyter is optional; it is not an AgentKernel runtime dependency.
+
+The deterministic scripts remain CI-friendly counterparts:
+
 ```bash
 python examples/basic_agent.py
 python examples/persistent_session.py
@@ -203,6 +231,7 @@ Start here if you are new to the project:
 - [docs/releases/V0.8_RELEASE_REVIEW.md](docs/releases/V0.8_RELEASE_REVIEW.md)
 - [docs/releases/V0.8_RELEASE_NOTES.md](docs/releases/V0.8_RELEASE_NOTES.md)
 - [docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+- [Interactive labs](examples/labs/README.md)
 
 Quick tutorials:
 
@@ -221,8 +250,10 @@ Recommended reading path:
 
 ```text
 README
-  -> Getting Started guide
-  -> V0.1-V0.8 tutorials
+  -> flagship Interactive Lab
+  -> V0.1-V0.8 Interactive Labs
+  -> optional Real Model Lab
+  -> deterministic tutorials
   -> Architecture
   -> Evaluation / RuntimeBench
   -> Release Review

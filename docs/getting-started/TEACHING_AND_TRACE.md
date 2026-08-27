@@ -5,10 +5,61 @@ onboarding pass. It separates deterministic tutorials, RuntimeBench evidence,
 and opt-in real-model trace demos so readers do not confuse local runtime
 fixtures with real LLM evaluation.
 
-## 1. Deterministic Tutorials
+## 1. Interactive Labs
+
+The notebooks under `examples/labs/` are the recommended first learning path.
+They are problem-oriented experiments rather than terminal output fixtures.
+
+Start with:
+
+```text
+examples/labs/v0_3_durable_side_effect_lab.ipynb
+```
+
+It shows:
+
+```text
+PREPARE -> DISPATCH -> external success -> crash before COMMIT
+      -> restart -> RECONCILE_REQUIRED -> commit existing result
+```
+
+Core lesson:
+
+```text
+Recovery != Retry
+```
+
+Then continue through V0.1-V0.8:
+
+| Version | Lab |
+| --- | --- |
+| V0.1 | `examples/labs/v0_1_agent_execution_lab.ipynb` |
+| V0.2 | `examples/labs/v0_2_recovery_lab.ipynb` |
+| V0.3 | `examples/labs/v0_3_durable_side_effect_lab.ipynb` |
+| V0.4 | `examples/labs/v0_4_context_vm_lab.ipynb` |
+| V0.5 | `examples/labs/v0_5_resource_handle_lab.ipynb` |
+| V0.6 | `examples/labs/v0_6_capability_lab.ipynb` |
+| V0.7 | `examples/labs/v0_7_process_runtime_lab.ipynb` |
+| V0.8 | `examples/labs/v0_8_multi_agent_runtime_lab.ipynb` |
+
+Each notebook exposes state before an operation, the operation itself,
+Kernel-visible facts, boundary/failure behavior, and the invariant learned.
+They use simple local display helpers and no heavy notebook-only dependency.
+
+Optional Jupyter usage:
+
+```bash
+python -m pip install jupyter
+jupyter lab examples/labs
+```
+
+Jupyter is not an AgentKernel runtime dependency.
+
+## 2. Deterministic Tutorials
 
 The tutorials under `examples/tutorials/` are the first runnable path for new
-users. They are intentionally offline and deterministic.
+users who want terminal scripts. They are intentionally offline and
+deterministic.
 
 They use:
 
@@ -46,7 +97,7 @@ These scripts demonstrate runtime semantics. They do not demonstrate real model
 reasoning, production reliability, production security, or superiority over any
 other agent system.
 
-## 2. RuntimeBench
+## 3. RuntimeBench
 
 RuntimeBench is release evidence, not a beginner tutorial and not a real-model
 eval.
@@ -70,7 +121,7 @@ does not duplicate the fake external effect" and "the tested multi-agent
 fixtures preserve identity and authority boundaries." It does not measure model
 intelligence or production workload performance.
 
-## 3. Real-Model Trace Demos
+## 4. Real-Model Trace Demos
 
 The real-model demos under `examples/real_agent/` are opt-in integration traces.
 They are not required by CI and do not run unless explicitly enabled.
@@ -105,7 +156,16 @@ python examples/real_agent/basic_tool_trace.py
 Without `AGENTKERNEL_RUN_REAL_MODEL=1`, the command exits safely with a skip
 message.
 
-## 4. Trace Format
+There is also an optional notebook:
+
+```text
+examples/labs/real_model_tool_trace_lab.ipynb
+```
+
+It uses the same explicit provider configuration gate and makes no network call
+by default.
+
+## 5. Trace Format
 
 The default trace is human-readable. It emphasizes observable runtime facts:
 
@@ -135,10 +195,11 @@ python examples/real_agent/basic_tool_trace.py --trace-jsonl traces/basic.jsonl
 The JSONL trace records observable event summaries only. It does not record API
 keys or authorization headers.
 
-## 5. Testing Strategy
+## 6. Testing Strategy
 
 | Artifact | Purpose | Mandatory CI? | Network/API key? |
 | --- | --- | --- | --- |
+| Interactive labs | Human-comprehension notebooks | JSON and deterministic cell validation | V0.1-V0.8 no; real-model lab opt-in |
 | Deterministic tutorials | Teaching fixture + Kernel semantics | Yes | No |
 | RuntimeBench | Release runtime invariants | Yes | No |
 | Real-model traces | Provider integration + visible runtime trajectory | No | Yes, opt-in only |
@@ -147,7 +208,7 @@ The real-model demos are intentionally outside the mandatory correctness gate.
 Provider availability, latency, model behavior, and cost should not make
 `pytest -q` flaky.
 
-## 6. Onboarding Friction Recorded
+## 7. Onboarding Friction Recorded
 
 This documentation pass did not modify `agentkernel/` core code. The trace
 demos were built at the application/example layer using existing hooks, model
@@ -160,4 +221,5 @@ Observed friction to revisit during MiniCode Runtime API Review:
   to demonstrate exact crash points;
 - richer trace capture may benefit from a stable public observer surface;
 - the real-model trace demos are examples, not a full observability framework.
-
+- interactive labs can expose state with small tables, but a stable public
+  observer API would make notebook teaching cells shorter.
