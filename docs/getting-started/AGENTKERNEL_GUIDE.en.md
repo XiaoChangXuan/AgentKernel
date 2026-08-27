@@ -256,7 +256,7 @@ Runnable demonstration:
 python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
-The tutorial creates a parent and child Agent, proves the child does not inherit the parent's tool authority, then delegates one narrowed grant and runs the same tool successfully through the child.
+The tutorial creates parent/child Agents and Processes, proves the child does not inherit the parent's tool authority, sends a Resource reference over IPC, shows that IPC and ResourceShare do not grant access by themselves, then delegates narrowed Resource and Tool grants and succeeds.
 
 Trade-off: multi-agent coordination is more explicit. Callers must handle more runtime objects and recovery obligations.
 

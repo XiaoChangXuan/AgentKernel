@@ -256,7 +256,7 @@ Runnable demonstration:
 python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
-该教程创建 parent/child Agent，先证明 child 不会隐式继承 parent 的 tool authority，再 delegate 一个收窄 grant，并用 child 成功执行同一个 tool。
+该教程创建 parent/child Agent 与 Process，先证明 child 不会隐式继承 parent 的 tool authority，再通过 IPC 传递 Resource reference，展示 IPC 和 ResourceShare 本身都不等于 access grant，最后 delegate 收窄的 Resource 与 Tool grant 并成功访问。
 
 Trade-off: 多 Agent 协作更显式，调用方要处理更多 runtime objects 和 recovery obligations。
 

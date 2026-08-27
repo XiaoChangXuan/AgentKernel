@@ -92,7 +92,15 @@ def test_v0_8_multi_agent_runtime_tutorial_runs() -> None:
 
     assert "V0.8 Multi-Agent Runtime" in output
     assert "lineage=agent-parent/agent-child" in output
+    assert "process_lineage=process-parent/process-child" in output
+    assert "agent_tree_is_process_tree=False" in output
     assert "child_initial_grants=0" in output
     assert "before_delegation_ok=False" in output
-    assert "delegation_allowed=True" in output
+    assert "ipc_resource_ref=artifact://res_secret" in output
+    assert "ipc_ref_grants_access=False" in output
+    assert "share_allowed=True" in output
+    assert "share_without_capability_grants_access=False" in output
+    assert "resource_delegation_allowed=True" in output
+    assert "after_share_and_capability_read='secret-bytes'" in output
+    assert "tool_delegation_allowed=True" in output
     assert "after_delegation_result=5" in output
