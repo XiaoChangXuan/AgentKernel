@@ -9,7 +9,7 @@ from minicode.errors import MiniCodeError
 from minicode.patch import PatchError, apply_parsed_patch, parse_patch
 from minicode.workspace import WorkspaceIdentity
 
-from .common import argument_string, require_workspace_write, tool_error_from_minicode
+from .common import argument_string, tool_error_from_minicode
 from .schemas import error_result, success_result
 
 
@@ -30,21 +30,13 @@ async def apply_patch_handler(
     context: ToolExecutionContext,
 ) -> JsonValue:
     try:
-        patch_text = argument_string(dict(arguments), "patch")
-        parsed = parse_patch(patch_text)
-        for path in parsed.paths:
-            normalized = workspace.normalize_path(path, must_exist=False)
-            require_workspace_write(
-                workspace=workspace,
-                relative_path=normalized.relative_path,
-                context=context,
-            )
-        result = apply_parsed_patch(workspace, parsed)
+        from minicode.durable_patch import durable_apply_patch_handler
+
+        return await durable_apply_patch_handler(workspace, arguments, context)
     except PatchError as error:
         return _patch_error_result(error)
     except MiniCodeError as error:
         raise tool_error_from_minicode(error) from error
-    return success_result(result.to_dict())
 
 
 def _patch_error_result(error: PatchError) -> dict[str, JsonValue]:

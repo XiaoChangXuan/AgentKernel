@@ -34,13 +34,7 @@ class PatchApplyResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _Line:
-    text: str
-    newline: str
-
-
-@dataclass(frozen=True, slots=True)
-class _Plan:
+class PatchFilePlan:
     path: Path
     relative_path: str
     operation: str
@@ -48,6 +42,143 @@ class _Plan:
     preimage_hash: str | None
     postimage_hash: str | None
     hunk_count: int
+
+    def to_durable_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "path": self.relative_path,
+            "operation": self.operation,
+            "preimage_hash": self.preimage_hash,
+            "postimage_hash": self.postimage_hash,
+            "hunk_count": self.hunk_count,
+        }
+        if self.output is not None:
+            payload["postimage_text"] = self.output.decode("utf-8")
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class PatchMutationPlan:
+    files: tuple[PatchFilePlan, ...]
+
+    @property
+    def changed_files(self) -> tuple[str, ...]:
+        return tuple(plan.relative_path for plan in self.files)
+
+    @property
+    def hunk_count(self) -> int:
+        return sum(plan.hunk_count for plan in self.files)
+
+    def to_result(self) -> PatchApplyResult:
+        return PatchApplyResult(
+            applied=True,
+            changed_files=self.changed_files,
+            hunk_count=self.hunk_count,
+            summary=tuple(
+                {
+                    "path": plan.relative_path,
+                    "operation": plan.operation,
+                    "hunks": plan.hunk_count,
+                }
+                for plan in self.files
+            ),
+            preimage_hashes={
+                plan.relative_path: plan.preimage_hash for plan in self.files
+            },
+            postimage_hashes={
+                plan.relative_path: plan.postimage_hash for plan in self.files
+            },
+        )
+
+    def to_durable_dict(self) -> dict[str, object]:
+        return {
+            "changed_files": list(self.changed_files),
+            "hunk_count": self.hunk_count,
+            "files": [plan.to_durable_dict() for plan in self.files],
+        }
+
+    @classmethod
+    def from_durable_dict(
+        cls,
+        workspace: WorkspaceIdentity,
+        payload: object,
+    ) -> "PatchMutationPlan":
+        if not isinstance(payload, dict):
+            raise PatchError(
+                "durable_state_invalid",
+                "durable patch plan must be an object",
+                False,
+            )
+        raw_files = payload.get("files")
+        if not isinstance(raw_files, list) or not raw_files:
+            raise PatchError(
+                "durable_state_invalid",
+                "durable patch plan must contain files",
+                False,
+            )
+        plans: list[PatchFilePlan] = []
+        for item in raw_files:
+            if not isinstance(item, dict):
+                raise PatchError(
+                    "durable_state_invalid",
+                    "durable patch file plan must be an object",
+                    False,
+                )
+            relative_path = _required_string(item, "path")
+            operation = _required_string(item, "operation")
+            if operation not in {"add", "update", "delete"}:
+                raise PatchError(
+                    "durable_state_invalid",
+                    f"unsupported durable patch operation: {operation}",
+                    False,
+                    {"file": relative_path},
+                )
+            normalized = workspace.normalize_path(relative_path, must_exist=False)
+            output = None
+            postimage_text = item.get("postimage_text")
+            if operation != "delete":
+                if not isinstance(postimage_text, str):
+                    raise PatchError(
+                        "durable_state_invalid",
+                        "durable patch postimage_text is required for add/update",
+                        False,
+                        {"file": relative_path},
+                    )
+                output = postimage_text.encode("utf-8")
+            elif postimage_text is not None:
+                raise PatchError(
+                    "durable_state_invalid",
+                    "delete durable patch plan cannot contain postimage_text",
+                    False,
+                    {"file": relative_path},
+                )
+            hunk_count = item.get("hunk_count")
+            if isinstance(hunk_count, bool) or not isinstance(hunk_count, int) or hunk_count < 0:
+                raise PatchError(
+                    "durable_state_invalid",
+                    "durable patch hunk_count must be a non-negative integer",
+                    False,
+                    {"file": relative_path},
+                )
+            preimage_hash = _optional_hash(item, "preimage_hash")
+            postimage_hash = _optional_hash(item, "postimage_hash")
+            plans.append(
+                PatchFilePlan(
+                    path=normalized.absolute_path,
+                    relative_path=normalized.relative_path,
+                    operation=operation,
+                    output=output,
+                    preimage_hash=preimage_hash,
+                    postimage_hash=postimage_hash,
+                    hunk_count=hunk_count,
+                )
+            )
+        return cls(tuple(plans))
+
+
+@dataclass(frozen=True, slots=True)
+class _Line:
+    text: str
+    newline: str
 
 
 def apply_patch_text(workspace: WorkspaceIdentity, patch: str) -> PatchApplyResult:
@@ -57,14 +188,41 @@ def apply_patch_text(workspace: WorkspaceIdentity, patch: str) -> PatchApplyResu
 def apply_parsed_patch(workspace: WorkspaceIdentity, parsed: ParsedPatch) -> PatchApplyResult:
     """Validate every operation and hunk before any filesystem write."""
 
-    plans = _build_plans(workspace, parsed)
+    return apply_mutation_plan(plan_parsed_patch(workspace, parsed))
+
+
+def plan_parsed_patch(
+    workspace: WorkspaceIdentity,
+    parsed: ParsedPatch,
+) -> PatchMutationPlan:
+    """Build an exact, durable-safe mutation plan without writing files."""
+
+    return PatchMutationPlan(_build_plans(workspace, parsed))
+
+
+def apply_mutation_plan(plan: PatchMutationPlan) -> PatchApplyResult:
+    """Apply an already validated mutation plan."""
+
     try:
-        for plan in plans:
-            if plan.output is None:
-                plan.path.unlink()
+        for file_plan in plan.files:
+            current_hash = hash_file_or_absent(file_plan.path)
+            if current_hash != file_plan.preimage_hash:
+                raise PatchError(
+                    "workspace_state_changed",
+                    f"file state changed before patch dispatch: {file_plan.relative_path}",
+                    False,
+                    {
+                        "file": file_plan.relative_path,
+                        "expected_preimage_hash": file_plan.preimage_hash,
+                        "current_hash": current_hash,
+                    },
+                )
+        for file_plan in plan.files:
+            if file_plan.output is None:
+                file_plan.path.unlink()
             else:
-                plan.path.parent.mkdir(parents=True, exist_ok=True)
-                plan.path.write_bytes(plan.output)
+                file_plan.path.parent.mkdir(parents=True, exist_ok=True)
+                file_plan.path.write_bytes(file_plan.output)
     except OSError as exc:
         raise PatchError(
             "write_failed",
@@ -72,24 +230,38 @@ def apply_parsed_patch(workspace: WorkspaceIdentity, parsed: ParsedPatch) -> Pat
             True,
         ) from exc
 
-    return PatchApplyResult(
-        applied=True,
-        changed_files=tuple(plan.relative_path for plan in plans),
-        hunk_count=sum(plan.hunk_count for plan in plans),
-        summary=tuple(
-            {
-                "path": plan.relative_path,
-                "operation": plan.operation,
-                "hunks": plan.hunk_count,
-            }
-            for plan in plans
-        ),
-        preimage_hashes={plan.relative_path: plan.preimage_hash for plan in plans},
-        postimage_hashes={plan.relative_path: plan.postimage_hash for plan in plans},
-    )
+    actual = {
+        file_plan.relative_path: hash_file_or_absent(file_plan.path)
+        for file_plan in plan.files
+    }
+    for file_plan in plan.files:
+        if actual[file_plan.relative_path] != file_plan.postimage_hash:
+            raise PatchError(
+                "postimage_verification_failed",
+                f"patch postimage verification failed: {file_plan.relative_path}",
+                False,
+                {
+                    "file": file_plan.relative_path,
+                    "expected_postimage_hash": file_plan.postimage_hash,
+                    "actual_hash": actual[file_plan.relative_path],
+                },
+            )
+    return plan.to_result()
 
 
-def _build_plans(workspace: WorkspaceIdentity, parsed: ParsedPatch) -> tuple[_Plan, ...]:
+def hash_file_or_absent(path: Path) -> str | None:
+    if not path.exists():
+        return ABSENT_HASH
+    if path.is_dir():
+        raise PatchError(
+            "is_directory",
+            f"path is a directory: {path}",
+            False,
+        )
+    return _sha256(path.read_bytes())
+
+
+def _build_plans(workspace: WorkspaceIdentity, parsed: ParsedPatch) -> tuple[PatchFilePlan, ...]:
     seen: set[str] = set()
     plans: list[_Plan] = []
     for operation in parsed.operations:
@@ -123,11 +295,11 @@ def _build_plans(workspace: WorkspaceIdentity, parsed: ParsedPatch) -> tuple[_Pl
     return tuple(plans)
 
 
-def _plan_add(operation: AddFile, path: Path, relative_path: str) -> _Plan:
+def _plan_add(operation: AddFile, path: Path, relative_path: str) -> PatchFilePlan:
     if path.exists():
         raise PatchError("file_already_exists", f"file already exists: {relative_path}", False, {"file": relative_path})
     payload = "".join(f"{line}\n" for line in operation.lines).encode("utf-8")
-    return _Plan(
+    return PatchFilePlan(
         path=path,
         relative_path=relative_path,
         operation="add",
@@ -138,7 +310,7 @@ def _plan_add(operation: AddFile, path: Path, relative_path: str) -> _Plan:
     )
 
 
-def _plan_update(operation: UpdateFile, path: Path, relative_path: str) -> _Plan:
+def _plan_update(operation: UpdateFile, path: Path, relative_path: str) -> PatchFilePlan:
     raw = _read_existing_text_bytes(path, relative_path)
     lines = _decode_lines(raw, relative_path)
     default_newline = _default_newline(lines)
@@ -157,7 +329,7 @@ def _plan_update(operation: UpdateFile, path: Path, relative_path: str) -> _Plan
         current = current[:match_index] + replacement + current[match_index + old_len :]
         cursor = match_index + len(replacement)
     output = _encode_lines(current)
-    return _Plan(
+    return PatchFilePlan(
         path=path,
         relative_path=relative_path,
         operation="update",
@@ -168,9 +340,9 @@ def _plan_update(operation: UpdateFile, path: Path, relative_path: str) -> _Plan
     )
 
 
-def _plan_delete(path: Path, relative_path: str) -> _Plan:
+def _plan_delete(path: Path, relative_path: str) -> PatchFilePlan:
     raw = _read_existing_text_bytes(path, relative_path)
-    return _Plan(
+    return PatchFilePlan(
         path=path,
         relative_path=relative_path,
         operation="delete",
@@ -294,3 +466,27 @@ def _find_unique_hunk_match(
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _required_string(data: dict[str, object], name: str) -> str:
+    value = data.get(name)
+    if not isinstance(value, str) or not value:
+        raise PatchError(
+            "durable_state_invalid",
+            f"durable patch {name} must be a non-empty string",
+            False,
+        )
+    return value
+
+
+def _optional_hash(data: dict[str, object], name: str) -> str | None:
+    value = data.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) != 64:
+        raise PatchError(
+            "durable_state_invalid",
+            f"durable patch {name} must be a sha256 hex string or null",
+            False,
+        )
+    return value
