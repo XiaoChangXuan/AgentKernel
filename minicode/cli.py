@@ -50,8 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_options(trace)
     trace.add_argument("session_id")
 
-    bench = subparsers.add_parser("bench", help="Run MiniCode IntegrationBench.")
+    bench = subparsers.add_parser("bench", help="Run MiniCode validation suites.")
     add_common_options(bench)
+    bench.add_argument("--suite", choices=["integration", "phase2f"], default="integration")
+    bench.add_argument("--json", action="store_true")
+    bench.add_argument("--json-output", type=Path, default=None)
+    bench.add_argument("--no-write", action="store_true")
 
     return parser
 
@@ -84,12 +88,31 @@ def main(argv: Sequence[str] | None = None, stdout: TextIO | None = None, stderr
         return 5
 
     if args.command == "bench":
+        if args.suite == "phase2f":
+            from benchmarks.minicode import (
+                DEFAULT_OUTPUT,
+                format_human_report,
+                run_phase2f_validation,
+                write_phase2f_validation,
+            )
+
+            document = run_phase2f_validation()
+            payload = document.as_dict()
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), file=out)
+            else:
+                print(format_human_report(document), file=out)
+            if not args.no_write:
+                write_phase2f_validation(document, args.json_output or DEFAULT_OUTPUT)
+            return 0 if payload["summary"]["decision"] == "PASS" else 1
+
         payload = {
             "ok": False,
             "code": PHASE_2G_NOT_IMPLEMENTED,
             "command": args.command,
+            "suite": args.suite,
             "workspace": workspace.to_dict(),
-            "message": "MiniCode IntegrationBench starts in Phase 2G.",
+            "message": "MiniCode frozen IntegrationBench starts in Phase 2G. Use --suite phase2f for Phase 2F validation.",
         }
         print(json.dumps(payload, sort_keys=True), file=out)
         return 1
@@ -216,3 +239,7 @@ def _model_from_args(args: argparse.Namespace) -> ScriptedModelAdapter:
             )
         responses.append(scripted_response(**item))
     return ScriptedModelAdapter(responses)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

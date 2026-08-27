@@ -106,3 +106,55 @@ def test_cli_bench_is_phase_2g_stub(tmp_path):
     payload = json.loads(stdout.getvalue())
     assert exit_code == 1
     assert payload["code"] == PHASE_2G_NOT_IMPLEMENTED
+    assert payload["suite"] == "integration"
+
+
+def test_cli_bench_phase2f_runs_validation_suite(tmp_path):
+    fixture = make_minicode_workspace(tmp_path)
+    output = tmp_path / "phase2f.json"
+    stdout = io.StringIO()
+
+    exit_code = main(
+        [
+            "bench",
+            "--workspace",
+            str(fixture.root),
+            "--suite",
+            "phase2f",
+            "--json-output",
+            str(output),
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert "MiniCode Phase 2F Validation" in stdout.getvalue()
+    assert payload["suite"] == "minicode_phase2f_validation"
+    assert payload["summary"] == {"decision": "PASS", "failed": 0, "passed": 8, "total": 8}
+
+
+def test_cli_bench_phase2f_json_no_write(tmp_path):
+    fixture = make_minicode_workspace(tmp_path)
+    output = tmp_path / "phase2f.json"
+    stdout = io.StringIO()
+
+    exit_code = main(
+        [
+            "bench",
+            "--workspace",
+            str(fixture.root),
+            "--suite",
+            "phase2f",
+            "--json",
+            "--json-output",
+            str(output),
+            "--no-write",
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert exit_code == 0
+    assert payload["suite"] == "minicode_phase2f_validation"
+    assert output.exists() is False

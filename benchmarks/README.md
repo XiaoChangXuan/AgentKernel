@@ -79,6 +79,7 @@ evidence generation. Release claims should use RuntimeBench.
 | `benchmarks/v0_7_runtime_benchmark.py` | B1, B5, B7 source material |
 | `benchmarks/runtimebench/adapters.py` | B5 Resource Governance and B7 Boundary Isolation RuntimeBench cases |
 | `benchmarks/runtimebench/long_horizon.py` | B6 Long-Horizon Runtime Stability |
+| `benchmarks/minicode/runner.py` | MiniCode Phase 2F validation, not RuntimeBench |
 
 ## Leaf Commands
 
@@ -92,7 +93,45 @@ python -m benchmarks.context_vm.runner
 python -m benchmarks.capability_runtime_benchmark
 python -m benchmarks.v0_7_runtime_benchmark
 python -m benchmarks.run_all
+python -m benchmarks.minicode
 ```
 
 Their result files under `benchmarks/results/` are leaf, historical, or
 diagnostic results unless explicitly wrapped by RuntimeBench.
+
+## MiniCode Phase 2F Validation
+
+MiniCode Phase 2F validation is a deterministic CodeAgent integration check
+suite. It is intentionally separate from AgentKernel RuntimeBench and from the
+future frozen MiniCode IntegrationBench.
+
+Commands:
+
+```bash
+python -m benchmarks.minicode
+python -m minicode.cli bench --suite phase2f
+```
+
+Machine-readable result:
+
+```text
+benchmarks/results/minicode_phase2f_validation.json
+```
+
+Phase 2F checks:
+
+| Check | Name |
+| --- | --- |
+| F1 | Workspace |
+| F2 | Tool Visibility |
+| F3 | Durable Patch Recovery |
+| F4 | Resource Authority |
+| F5 | Nonzero Command |
+| F6 | Budget Block |
+| F7 | Resume / Handoff |
+| F8 | Trace Redaction |
+
+These F1-F8 checks do not redefine the frozen MiniCode IntegrationBench I1-I8
+contract. Future MiniCode IntegrationBench work remains the
+application/runtime composition benchmark, with reviewer child Agent explicitly
+deferred for MiniCode v0.

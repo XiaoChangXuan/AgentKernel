@@ -10,8 +10,9 @@ Phase 2F adds MiniCode's coding harness loop without changing AgentKernel core. 
 - Minimal opt-in `OpenAICompatibleAdapter` for OpenAI-compatible chat completion APIs.
 - `MiniCodeAgentLoop` over AgentKernel `Agent`, `Session`, `ToolRegistry`, `ContextManager`, `CooperativeScheduler`, `UsageCollector`, and `ResourceService`.
 - Observable `TraceRecorder` JSONL stream with secret redaction.
-- CLI `run`, `resume`, and `trace` commands.
-- `bench` remains a Phase 2G stub.
+- CLI `run`, `resume`, `trace`, and explicit `bench --suite phase2f`
+  validation commands.
+- `bench --suite integration` remains a Phase 2G stub.
 
 ## Adapter Behavior
 
@@ -73,8 +74,50 @@ The loop checks Scheduler safe points before turns, steps, model calls, tool cal
 - `minicode run --script-json script.json --workspace PATH TASK...`
 - `minicode resume --session-path session.jsonl --script-json script.json SESSION_ID`
 - `minicode trace --session-path session.jsonl SESSION_ID`
+- `minicode bench --suite phase2f`
 
 The CLI only enables scripted deterministic model runs in Phase 2F.
+
+`bench --suite phase2f` runs MiniCode Phase 2F validation checks and writes
+`benchmarks/results/minicode_phase2f_validation.json` unless `--no-write` is
+provided. It does not claim the frozen Phase 2G IntegrationBench contract.
+`bench --suite integration` remains explicitly not implemented until Phase 2G.
+
+## Phase 2F Validation Evidence
+
+The Phase 2F validation runner is available through:
+
+```bash
+python -m benchmarks.minicode
+python -m minicode.cli bench --suite phase2f
+```
+
+It runs these deterministic offline checks:
+
+| Check | Purpose |
+| --- | --- |
+| F1 Workspace | Validates workspace discovery, containment, and AGENTS.md projection. |
+| F2 Tool Visibility | Validates `ToolRegistry.model_schemas(agent.control)` and execution-time capability denial. |
+| F3 Durable Patch Recovery | Validates durable `apply_patch` prepare/dispatch/crash/reconcile behavior. |
+| F4 Resource Authority | Validates large command output externalization and Handle != Permission. |
+| F5 Nonzero Command | Validates pytest exit 1 as a structured command observation followed by repair and pytest exit 0. |
+| F6 Budget Block | Validates scheduler budget blocking at a safe point without rewriting Session truth. |
+| F7 Resume / Handoff | Validates runtime identity replacement while preserving durable Session facts. |
+| F8 Trace Redaction | Validates observable trace redaction for secret-shaped fields. |
+
+These checks are Phase 2F integration checks, not the frozen Phase 2G
+IntegrationBench IDs. The frozen future contract remains:
+
+| ID | Future IntegrationBench contract |
+| --- | --- |
+| I1 | Basic edit |
+| I2 | Test-and-fix loop |
+| I3 | Crash/resume |
+| I4 | Large stdout ResourceHandle |
+| I5 | Capability denial |
+| I6 | Budget exhaustion |
+| I7 | Durable mutation crash/recovery |
+| I8 | Reviewer child Agent - deferred |
 
 ## MINICODE_IMPLEMENTATION_FRICTION
 
