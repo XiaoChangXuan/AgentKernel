@@ -153,6 +153,14 @@ Kernel mechanism: Context VM projects events into Context Pages and then into a 
 
 Key invariant: Session durable truth != Model context.
 
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_4_context_vm.py
+```
+
+The tutorial builds several durable turns, projects them into Context Pages, and selects a smaller Working Set. Its output shows `context_equals_truth=False`, which is the intended boundary: context is only the model-visible projection.
+
 Evidence: RuntimeBench B3 Context Efficiency / Truth Preservation checks bounded context, truth preservation, and deterministic correctness oracles.
 
 Trade-off: projection and compaction add runtime cost, and the host still chooses context policy.
@@ -166,6 +174,14 @@ Naive failure mode: a 100 MB or 1 GB result is pushed into messages, causing con
 Kernel mechanism: the Resource Layer stores large bytes while context carries a handle, preview, or bounded marker.
 
 Key invariant: Resource != Context; ResourceHandle != Permission.
+
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_5_resource_handle.py
+```
+
+The tutorial stores 32,000 bytes as an artifact, carries only an `artifact://...` URI as the context marker, and verifies that a restarted ResourceService can read the same bytes.
 
 Evidence: Resource RuntimeBench cases show Artifact Handle keeping context size stable while resource bytes remain in ResourceStore.
 
@@ -181,6 +197,14 @@ Kernel mechanism: `CapabilityGrant`, `AuthorizationRequest`, `AuthorizationDecis
 
 Key invariant: Model proposal != Kernel authority.
 
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_6_capability_core.py
+```
+
+The tutorial grants `agent-allowed` structured authority for `tool://math.add`, leaves `agent-denied` grantless, and shows that the denied agent sees zero model-visible tools and receives `EACCES` at execution.
+
 Evidence: RuntimeBench B4 Capability Isolation covers unauthorized tool, resource read, payment dispatch denial, and legacy tool compatibility.
 
 Trade-off: authority becomes explicit. Hosts must provide grants and policy input. V0.8 is still not RBAC, IAM, or complete namespace security.
@@ -194,6 +218,14 @@ Naive failure mode: cancellation is mistaken for rollback; budget exceeded is mi
 Kernel mechanism: `ProcessControlBlock`, cooperative scheduler, safe points, `UsageCollector`, and runtime budget blocking.
 
 Key invariant: Agent != Process; Accounting != Authority; Budget exceeded != Semantic failure.
+
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_7_process_runtime.py
+```
+
+The tutorial creates one Agent-owned Process, records deterministic LLM token usage, hits a scheduler safe-point budget block, resets runtime-only usage, and unblocks the Process back to `READY`.
 
 Evidence: RuntimeBench B5 Resource Governance and B7 Boundary Isolation cover budget safe-point blocking, unblock recovery, and Agent / Process / Session / Context / ResourceStore boundaries.
 
@@ -217,6 +249,14 @@ Key invariants:
 - Persistent semantic facts != Live runtime state
 
 Evidence: RuntimeBench B8 Multi-Agent Runtime covers M1-M10. M10 passes deterministic profiles at 100, 500, and 1000 logical steps.
+
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_8_multi_agent_runtime.py
+```
+
+The tutorial creates a parent and child Agent, proves the child does not inherit the parent's tool authority, then delegates one narrowed grant and runs the same tool successfully through the child.
 
 Trade-off: multi-agent coordination is more explicit. Callers must handle more runtime objects and recovery obligations.
 
@@ -295,12 +335,17 @@ High-level difference:
 ## Recommended Reading Path
 
 1. Read this guide.
-2. Run the three tutorials:
+2. Run the eight tutorials:
 
 ```bash
 python examples/tutorials/v0_1_agent_spine.py
 python examples/tutorials/v0_2_recovery.py
 python examples/tutorials/v0_3_durable_side_effect.py
+python examples/tutorials/v0_4_context_vm.py
+python examples/tutorials/v0_5_resource_handle.py
+python examples/tutorials/v0_6_capability_core.py
+python examples/tutorials/v0_7_process_runtime.py
+python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
 3. Read `docs/ARCHITECTURE.md`.

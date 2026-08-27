@@ -195,6 +195,11 @@ Quick tutorials:
 python examples/tutorials/v0_1_agent_spine.py
 python examples/tutorials/v0_2_recovery.py
 python examples/tutorials/v0_3_durable_side_effect.py
+python examples/tutorials/v0_4_context_vm.py
+python examples/tutorials/v0_5_resource_handle.py
+python examples/tutorials/v0_6_capability_core.py
+python examples/tutorials/v0_7_process_runtime.py
+python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
 Recommended reading path:
@@ -202,7 +207,7 @@ Recommended reading path:
 ```text
 README
   -> Getting Started guide
-  -> V0.1/V0.2/V0.3 tutorials
+  -> V0.1-V0.8 tutorials
   -> Architecture
   -> Evaluation / RuntimeBench
   -> Release Review

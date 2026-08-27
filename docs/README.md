@@ -23,10 +23,17 @@ Run these from the repository root:
 python examples/tutorials/v0_1_agent_spine.py
 python examples/tutorials/v0_2_recovery.py
 python examples/tutorials/v0_3_durable_side_effect.py
+python examples/tutorials/v0_4_context_vm.py
+python examples/tutorials/v0_5_resource_handle.py
+python examples/tutorials/v0_6_capability_core.py
+python examples/tutorials/v0_7_process_runtime.py
+python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
-They introduce the runtime spine, durable Session recovery, and Durable Tool WAL
-reconciliation without real API keys or network calls.
+They introduce the runtime spine, durable Session recovery, Durable Tool WAL
+reconciliation, Context VM, Resource Handle, Capability enforcement, Process
+Runtime, and Multi-Agent runtime boundaries without real API keys or network
+calls.
 
 ## Canonical Documents
 

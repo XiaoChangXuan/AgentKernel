@@ -153,6 +153,14 @@ Kernel mechanism: Context VM 将 Event 投影为 Context Page，再形成 Workin
 
 Key invariant: Session durable truth != Model context。
 
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_4_context_vm.py
+```
+
+该教程先写入多轮 durable turn，再投影成 Context Pages，并选择一个更小的 Working Set。输出中的 `context_equals_truth=False` 表示预期边界：context 只是 model-visible projection，不是 truth。
+
 Evidence: RuntimeBench B3 Context Efficiency / Truth Preservation 验证 bounded context、truth preservation 和 deterministic correctness oracle。
 
 Trade-off: 多了一层 projection 和 compaction 成本，Host 仍需选择合适的 context policy。
@@ -166,6 +174,14 @@ Naive failure mode: 把 100 MB 或 1 GB 结果塞进 messages，context 和内�
 Kernel mechanism: Resource Layer 保存大字节，Context 中只保留 handle、preview 或 bounded marker。
 
 Key invariant: Resource != Context；ResourceHandle != Permission。
+
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_5_resource_handle.py
+```
+
+该教程把 32,000 bytes 存成 artifact，context 中只携带 `artifact://...` marker，并验证重启后的 ResourceService 仍能读取同一份 bytes。
 
 Evidence: RuntimeBench resource cases 证明 Artifact Handle 让 context size 保持稳定，同时资源字节留在 ResourceStore。
 
@@ -181,6 +197,14 @@ Kernel mechanism: `CapabilityGrant`、`AuthorizationRequest`、`AuthorizationDec
 
 Key invariant: Model proposal != Kernel authority。
 
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_6_capability_core.py
+```
+
+该教程给 `agent-allowed` 授予 `tool://math.add` 的 structured authority，让 `agent-denied` 保持无 grant，并展示 denied agent 看不到 model-visible tool，强行执行也会得到 `EACCES`。
+
 Evidence: RuntimeBench B4 Capability Isolation 覆盖 unauthorized tool、resource read、payment dispatch denial 和 legacy tool compatibility。
 
 Trade-off: 权限模型更显式，Host 必须提供 grant 和 policy 输入；当前 V0.8 仍不是 RBAC、IAM 或完整 namespace security。
@@ -194,6 +218,14 @@ Naive failure mode: cancellation 被误当 rollback；budget exceeded 被误当�
 Kernel mechanism: `ProcessControlBlock`、cooperative scheduler、safe point、`UsageCollector`、runtime budget blocking。
 
 Key invariant: Agent != Process；Accounting != Authority；Budget exceeded != Semantic failure。
+
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_7_process_runtime.py
+```
+
+该教程创建一个 Agent-owned Process，记录 deterministic LLM token usage，在 scheduler safe point 触发 budget block，然后重置 runtime-only usage 并把 Process unblock 回 `READY`。
 
 Evidence: RuntimeBench B5 Resource Governance 和 B7 Boundary Isolation 覆盖 budget safe point blocking、unblock recovery，以及 Agent / Process / Session / Context / ResourceStore 边界。
 
@@ -217,6 +249,14 @@ Key invariants:
 - Persistent semantic facts != Live runtime state
 
 Evidence: RuntimeBench B8 Multi-Agent Runtime 覆盖 M1-M10，M10 在 100 / 500 / 1000 logical steps 下 deterministic PASS。
+
+Runnable demonstration:
+
+```bash
+python examples/tutorials/v0_8_multi_agent_runtime.py
+```
+
+该教程创建 parent/child Agent，先证明 child 不会隐式继承 parent 的 tool authority，再 delegate 一个收窄 grant，并用 child 成功执行同一个 tool。
 
 Trade-off: 多 Agent 协作更显式，调用方要处理更多 runtime objects 和 recovery obligations。
 
@@ -295,12 +335,17 @@ docs/research/AGENT_RUNTIME_DESIGN_COMPARISON.md
 ## 建议阅读路径
 
 1. 先读本指南。
-2. 跑三个教程：
+2. 跑八个教程：
 
 ```bash
 python examples/tutorials/v0_1_agent_spine.py
 python examples/tutorials/v0_2_recovery.py
 python examples/tutorials/v0_3_durable_side_effect.py
+python examples/tutorials/v0_4_context_vm.py
+python examples/tutorials/v0_5_resource_handle.py
+python examples/tutorials/v0_6_capability_core.py
+python examples/tutorials/v0_7_process_runtime.py
+python examples/tutorials/v0_8_multi_agent_runtime.py
 ```
 
 3. 阅读 `docs/ARCHITECTURE.md`。
