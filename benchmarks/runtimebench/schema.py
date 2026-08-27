@@ -1,4 +1,4 @@
-"""JSON schema helpers for RuntimeBench V0.7."""
+"""JSON schema helpers for RuntimeBench V0.8."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ from typing import Any, TypeAlias
 
 JsonValue: TypeAlias = Any
 
-RUNTIMEBENCH_VERSION = "0.7"
-RUNTIME_VERSION = "AgentKernel V0.7"
+RUNTIMEBENCH_VERSION = "0.8"
+RUNTIME_VERSION = "AgentKernel V0.8"
 
 
 @dataclass(frozen=True, slots=True)
 class FixtureSpec:
     fixture_id: str
-    fixture_version: str = "v0.7"
+    fixture_version: str = "v0.8"
     deterministic: bool = True
     offline: bool = True
     parameters: Mapping[str, JsonValue] = field(default_factory=dict)

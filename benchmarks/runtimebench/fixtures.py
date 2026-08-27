@@ -1,4 +1,4 @@
-"""RuntimeBench V0.7 fixture declarations."""
+"""RuntimeBench fixture declarations."""
 
 from __future__ import annotations
 
@@ -111,5 +111,28 @@ def boundary_isolation_fixture() -> FixtureSpec:
                 "accounting_is_not_authority",
                 "resource_store_is_not_authorization",
             ],
+        },
+    )
+
+
+def multi_agent_runtime_fixture() -> FixtureSpec:
+    return FixtureSpec(
+        fixture_id="multi_agent_runtime_invariants",
+        fixture_version="v0.8",
+        parameters={
+            "cases": [
+                "M1_agent_process_identity_isolation",
+                "M2_agent_tree_process_tree_separation",
+                "M3_capability_delegation_narrowing",
+                "M4_ipc_delivery_authority_isolation",
+                "M5_resource_sharing_isolation",
+                "M6_hierarchical_budget_isolation",
+                "M7_fault_cancellation_isolation",
+                "M8_integrated_multi_agent_recovery",
+                "M9_authority_shrink_after_restart",
+                "M10_long_horizon_multi_agent_composition",
+            ],
+            "horizons": [100, 500, 1000],
+            "offline": True,
         },
     )
