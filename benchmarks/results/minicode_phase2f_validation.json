@@ -1,0 +1,218 @@
+{
+  "benchmark_version": "minicode.phase2f.validation.v0",
+  "checks": [
+    {
+      "actual_minicode_tools_used": [],
+      "agentkernel_invariant_exercised": "Workspace identity and instruction discovery integrate with Context VM without granting authority",
+      "check_id": "F1",
+      "evidence": {
+        "nested_agents_md_seen": true,
+        "outside_path_denied": true,
+        "root_agents_md_seen": true,
+        "run_status": "completed",
+        "task_cwd_matches_fixture": true,
+        "workspace_root_matches_fixture": true
+      },
+      "failure_injection": null,
+      "fixture": "make_minicode_workspace nested task cwd fixture",
+      "forbidden_outcome": "Treating AGENTS.md or model text as authority, or permitting path escape",
+      "name": "Workspace",
+      "oracle": "nearest fixture root found, task cwd preserved, path escape denied, AGENTS.md included",
+      "scenario": "MiniCode discovers a fixture workspace, constrains paths, and projects AGENTS.md instructions.",
+      "scripted_model_behavior": "single scripted final response after model request construction",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [
+        "run_command"
+      ],
+      "agentkernel_invariant_exercised": "Tool visibility is not the same as complete execution authority",
+      "check_id": "F2",
+      "evidence": {
+        "denial_code": "EACCES",
+        "model_observed_denial": true,
+        "run_status": "completed",
+        "schema_visible": true,
+        "subprocess_dispatch_count": 0
+      },
+      "failure_injection": "Missing shell.execute grant",
+      "fixture": "restricted Agent capability profile",
+      "forbidden_outcome": "Model-visible tool schema bypasses execution-time capability check",
+      "name": "Tool visibility",
+      "oracle": "run_command schema visible, EACCES result recorded, subprocess dispatch count is zero",
+      "scenario": "ToolRegistry exposes model schemas according to tool authority and still denies execution without shell authority.",
+      "scripted_model_behavior": "model sees run_command tool.execute grant, proposes shell command, execution denies missing shell.execute",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [
+        "apply_patch"
+      ],
+      "agentkernel_invariant_exercised": "Recovery reconciles durable side effects; recovery is not blind retry",
+      "check_id": "F3",
+      "evidence": {
+        "dispatch_count": 1,
+        "post_reconcile_classification": "completed",
+        "pre_reconcile_classification": "reconcile_required",
+        "recognized_existing_mutation": true,
+        "reconcile_status": "succeeded"
+      },
+      "failure_injection": "Crash after mutation before TOOL_COMMIT",
+      "fixture": "durable apply_patch operation with persisted Session JSONL",
+      "forbidden_outcome": "Executing the filesystem mutation a second time during recovery",
+      "name": "Durable patch recovery",
+      "oracle": "postimage recognized, operation completed, dispatch count remains 1",
+      "scenario": "Patch mutation succeeds after DISPATCH and the process crashes before COMMIT.",
+      "scripted_model_behavior": "prepare/dispatch, apply mutation, destroy runtime, reload Session, reconcile",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [
+        "run_command"
+      ],
+      "agentkernel_invariant_exercised": "Resource != Context; Handle != Permission; large bytes are externalized through ResourceService",
+      "check_id": "F4",
+      "evidence": {
+        "authorized_resource_bytes": 5000,
+        "full_output_absent_from_context": true,
+        "preview_bytes": 4096,
+        "resource_handle_returned": true,
+        "resources_created": 1,
+        "run_status": "completed",
+        "stdout_bytes": 5000,
+        "truncated": true,
+        "unauthorized_read_denied": true
+      },
+      "failure_injection": null,
+      "fixture": "local workspace with Python subprocess emitting 5000 bytes",
+      "forbidden_outcome": "Stuffing full large output into model context or treating handle possession as permission",
+      "name": "Resource authority",
+      "oracle": "stdout has bounded preview, ResourceHandle reads exact bytes with authority, unauthorized read is denied",
+      "scenario": "A command emits deterministic large stdout and the next model turn sees only bounded preview plus handle.",
+      "scripted_model_behavior": "run_command large stdout, then final after observing bounded context",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [
+        "search_files",
+        "read_file",
+        "apply_patch",
+        "run_command"
+      ],
+      "agentkernel_invariant_exercised": "Non-zero subprocess exit is structured observation, not Tool crash",
+      "check_id": "F5",
+      "evidence": {
+        "final_contains_return_none": true,
+        "pytest_exit_codes": [
+          1,
+          0
+        ],
+        "run_status": "completed",
+        "tool_result_count": 7
+      },
+      "failure_injection": null,
+      "fixture": "calculator.py plus pytest fixture with zero division expectation",
+      "forbidden_outcome": "Treating pytest exit 1 as a Tool crash or terminating the loop before repair",
+      "name": "Nonzero command",
+      "oracle": "run_command exits are [1, 0]; final file has expected implementation; task completed",
+      "scenario": "Scripted CodeAgent applies a wrong patch, observes pytest exit 1, repairs, then observes pytest exit 0.",
+      "scripted_model_behavior": "inspect, patch, pytest exit 1, inspect, patch, pytest exit 0, final",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [],
+      "agentkernel_invariant_exercised": "Budget exceeded is runtime blocking, not semantic task failure or durable truth rewrite",
+      "check_id": "F6",
+      "evidence": {
+        "model_request_count": 1,
+        "process_state": "BLOCKED",
+        "run_status": "budget_exceeded",
+        "session_events": 3,
+        "tool_call_count": 0
+      },
+      "failure_injection": "max_token_usage=0",
+      "fixture": "single-turn scripted model response with one token of usage",
+      "forbidden_outcome": "Continuing tool/model dispatch after budget block or marking durable task truth as failed",
+      "name": "Budget block",
+      "oracle": "process is BLOCKED; only one model dispatch; no tool dispatch; Session remains readable",
+      "scenario": "A low token budget is exceeded at a scheduler safe point.",
+      "scripted_model_behavior": "first model response reports usage; scheduler blocks before further dispatch",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [
+        "apply_patch"
+      ],
+      "agentkernel_invariant_exercised": "Session is durable truth; Process is replaceable runtime identity; resume does not invent prior transcript",
+      "check_id": "F7",
+      "evidence": {
+        "events_after_resume": 18,
+        "events_before_resume": 13,
+        "first_status": "max_turns",
+        "process_recreated": true,
+        "resumed_status": "completed",
+        "same_session": true,
+        "tool_commit_count": 1
+      },
+      "failure_injection": "Runtime object destroyed after first turn before final answer",
+      "fixture": "persisted Session JSONL plus same workspace",
+      "forbidden_outcome": "Duplicating the durable mutation or treating old Process identity as durable truth",
+      "name": "Resume / handoff",
+      "oracle": "new process id differs, session id is preserved, prior durable commit remains singular, task completes",
+      "scenario": "Runtime is interrupted after a durable patch turn, then recreated through MiniCode resume.",
+      "scripted_model_behavior": "first runtime applies patch and stops; second runtime resumes and finalizes",
+      "status": "PASS"
+    },
+    {
+      "actual_minicode_tools_used": [],
+      "agentkernel_invariant_exercised": "Trace is observable evidence, not hidden CoT, and it must not leak secrets",
+      "check_id": "F8",
+      "evidence": {
+        "human_secret_absent": true,
+        "jsonl_secret_absent": true,
+        "public_fact_present": true,
+        "redaction_marker_present": true
+      },
+      "failure_injection": null,
+      "fixture": "synthetic TraceRecorder event with API key, Authorization header, and nested secret token",
+      "forbidden_outcome": "Leaking API key, Authorization header, or hidden reasoning into public trace",
+      "name": "Trace redaction",
+      "oracle": "secret token absent from JSONL and human text while non-secret fact remains visible",
+      "scenario": "Observable trace records runtime facts while redacting secret-shaped fields.",
+      "scripted_model_behavior": "record one trace event and render JSONL/human trace",
+      "status": "PASS"
+    }
+  ],
+  "deterministic": true,
+  "future_integrationbench_contract": {
+    "frozen_ids": [
+      "I1 Basic edit",
+      "I2 Test-and-fix loop",
+      "I3 Crash/resume",
+      "I4 Large stdout ResourceHandle",
+      "I5 Capability denial",
+      "I6 Budget exhaustion",
+      "I7 Durable mutation crash/recovery",
+      "I8 Reviewer child Agent - DEFERRED"
+    ],
+    "status": "not_claimed_by_phase2f_validation"
+  },
+  "limitations": [
+    "Synthetic local fixtures only.",
+    "ScriptedModelAdapter drives deterministic decisions.",
+    "Phase 2F validation measures MiniCode CodeAgent integration behavior, not model intelligence.",
+    "Real-model demo is opt-in and not a release oracle.",
+    "This is not the frozen Phase 2G IntegrationBench release artifact.",
+    "Reviewer child Agent remains deferred."
+  ],
+  "network": "not_used",
+  "offline": true,
+  "runtime_version": "AgentKernel V0.8 + MiniCode v0",
+  "suite": "minicode_phase2f_validation",
+  "summary": {
+    "decision": "PASS",
+    "failed": 0,
+    "passed": 8,
+    "total": 8
+  }
+}

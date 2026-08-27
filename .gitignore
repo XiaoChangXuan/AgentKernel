@@ -12,3 +12,5 @@ dist/
 .env
 .env.*
 !.env.example
+.minicode/
+**/.minicode/
