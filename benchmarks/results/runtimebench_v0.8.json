@@ -46,10 +46,10 @@
         "crash_case_count": 6,
         "duplicate_effect_count": 0,
         "lost_durable_fact_count": 0,
-        "max_replay_time_ms": 1.938,
+        "max_replay_time_ms": 1.807,
         "process_recovery_mapping_success": true,
         "raw_record_count": 7,
-        "recovery_latency_ms": 1.311,
+        "recovery_latency_ms": 1.377,
         "recovery_success_rate": 1.0
       },
       "raw_records": [
@@ -66,7 +66,7 @@
             "lost_events": 0,
             "pending_tool_calls": 0,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.023,
+            "replay_time_ms": 1.158,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -84,7 +84,7 @@
             "lost_events": 0,
             "pending_tool_calls": 0,
             "recovery_status": "interrupted",
-            "replay_time_ms": 0.856,
+            "replay_time_ms": 0.795,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -102,7 +102,7 @@
             "lost_events": 0,
             "pending_tool_calls": 1,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.097,
+            "replay_time_ms": 1.304,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -120,7 +120,7 @@
             "lost_events": 0,
             "pending_tool_calls": 1,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.399,
+            "replay_time_ms": 1.807,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -138,7 +138,7 @@
             "lost_events": 0,
             "pending_tool_calls": 1,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.938,
+            "replay_time_ms": 1.621,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -156,7 +156,7 @@
             "lost_events": 0,
             "pending_tool_calls": 0,
             "recovery_status": "interrupted",
-            "replay_time_ms": 1.555,
+            "replay_time_ms": 1.578,
             "success": true
           },
           "strategy": "agentkernel_replay"
@@ -229,7 +229,7 @@
         "ordinary_operation_count": 2,
         "raw_record_count": 2,
         "reconciliation_success_rate": 1.0,
-        "recovery_latency_ms": 10.384
+        "recovery_latency_ms": 10.535
       },
       "raw_records": [
         {
@@ -250,7 +250,7 @@
           "metrics": {
             "duplicate_execution": false,
             "final_session_status": "completed",
-            "latency_ms": 10.384,
+            "latency_ms": 10.535,
             "operation_count": 1,
             "pre_recovery_classification": "reconcile_required",
             "recovery_result": "succeeded",
@@ -361,7 +361,7 @@
           "metrics": {
             "context_bytes": 12806,
             "estimated_tokens": 3202,
-            "read_latency_ms": 8.786,
+            "read_latency_ms": 12.368,
             "resource_bytes": 10485760,
             "resource_bytes_read": 129,
             "resource_reads": 3,
@@ -404,7 +404,7 @@
           "metrics": {
             "context_bytes": 12809,
             "estimated_tokens": 3203,
-            "read_latency_ms": 10.15,
+            "read_latency_ms": 15.583,
             "resource_bytes": 104857600,
             "resource_bytes_read": 129,
             "resource_reads": 3,
@@ -447,7 +447,7 @@
           "metrics": {
             "context_bytes": 12809,
             "estimated_tokens": 3203,
-            "read_latency_ms": 12.229,
+            "read_latency_ms": 14.026,
             "resource_bytes": 524288000,
             "resource_bytes_read": 129,
             "resource_reads": 3,
@@ -464,7 +464,7 @@
             "compaction_cost": 0,
             "context_tokens": 298891,
             "final_correctness": true,
-            "latency_ms": 5.69,
+            "latency_ms": 6.409,
             "reclaim_tokens": 0,
             "recovery_ability": true,
             "success": true
@@ -478,7 +478,7 @@
             "compaction_cost": 0,
             "context_tokens": 618,
             "final_correctness": false,
-            "latency_ms": 8.694,
+            "latency_ms": 11.243,
             "reclaim_tokens": 298273,
             "recovery_ability": false,
             "success": false
@@ -492,7 +492,7 @@
             "compaction_cost": 0,
             "context_tokens": 661,
             "final_correctness": true,
-            "latency_ms": 8.216,
+            "latency_ms": 11.292,
             "reclaim_tokens": 298230,
             "recovery_ability": false,
             "success": true
@@ -507,7 +507,7 @@
             "compaction_count": 1,
             "context_tokens": 2091,
             "final_correctness": true,
-            "latency_ms": 522.527,
+            "latency_ms": 609.216,
             "pruned_pages": 0,
             "reclaim_tokens": 284791,
             "recovery_ability": true,
@@ -583,7 +583,7 @@
             "allowed": false,
             "error_code": "EACCES",
             "expected": "DENY",
-            "latency_ms": 1.796,
+            "latency_ms": 3.466,
             "model_visible": false,
             "success": true,
             "visible_tool_count": 0
@@ -597,7 +597,7 @@
             "allowed": false,
             "error_code": "EACCES",
             "expected": "DENY",
-            "latency_ms": 48.091,
+            "latency_ms": 48.51,
             "requested_resource": "artifact://res_secret",
             "resource_reads": 0,
             "success": true
@@ -614,7 +614,7 @@
             "error_code": "EACCES",
             "expected": "DENY",
             "external_execution_count": 0,
-            "latency_ms": 1.996,
+            "latency_ms": 2.887,
             "operation_classification": "completed",
             "success": true
           },
@@ -629,7 +629,7 @@
             "expected": "Recovery without duplicate",
             "external_execution_count": 1,
             "final_session_status": "completed",
-            "latency_ms": 9.962,
+            "latency_ms": 9.465,
             "payment_count": 1,
             "pre_recovery_classification": "safe_to_retry",
             "retry_allowed": true,
@@ -645,7 +645,7 @@
             "allowed": true,
             "error_code": null,
             "expected": "Backward compatible",
-            "latency_ms": 1.632,
+            "latency_ms": 2.355,
             "output": {
               "value": "ok"
             },
@@ -922,7 +922,7 @@
         ],
         "truth_preserved": true,
         "unauthorized_effect_count": 0,
-        "wall_time_ms": 2436.358
+        "wall_time_ms": 2613.752
       },
       "raw_records": [
         {
@@ -951,7 +951,7 @@
             "recovered_events": 628,
             "recovery_failure_count": 0,
             "recovery_success_count": 3,
-            "replay_time_ms": 18.115,
+            "replay_time_ms": 20.923,
             "resource_bytes": 41251,
             "resource_count": 10,
             "resource_read_bytes": 281,
@@ -966,7 +966,7 @@
             "truth_preserved": true,
             "unauthorized_effect_count": 0,
             "wall_time": 0.0,
-            "wall_time_ms": 507.727
+            "wall_time_ms": 502.644
           },
           "strategy": "agentkernel_composed_runtime_mechanisms"
         },
@@ -996,7 +996,7 @@
             "recovered_events": 3028,
             "recovery_failure_count": 0,
             "recovery_success_count": 3,
-            "replay_time_ms": 71.037,
+            "replay_time_ms": 85.801,
             "resource_bytes": 41259,
             "resource_count": 10,
             "resource_read_bytes": 289,
@@ -1011,7 +1011,7 @@
             "truth_preserved": true,
             "unauthorized_effect_count": 0,
             "wall_time": 0.0,
-            "wall_time_ms": 760.606
+            "wall_time_ms": 837.488
           },
           "strategy": "agentkernel_composed_runtime_mechanisms"
         },
@@ -1041,7 +1041,7 @@
             "recovered_events": 6028,
             "recovery_failure_count": 0,
             "recovery_success_count": 3,
-            "replay_time_ms": 144.717,
+            "replay_time_ms": 182.768,
             "resource_bytes": 41271,
             "resource_count": 10,
             "resource_read_bytes": 301,
@@ -1056,7 +1056,7 @@
             "truth_preserved": true,
             "unauthorized_effect_count": 0,
             "wall_time": 0.0,
-            "wall_time_ms": 1168.025
+            "wall_time_ms": 1273.62
           },
           "strategy": "agentkernel_composed_runtime_mechanisms"
         }
@@ -1264,20 +1264,25 @@
         "Durable WAL recovery classification"
       ],
       "metrics": {
-        "agent_budget_blocks": 1,
+        "agent_budget_blocks": 4,
         "authority_escalations": 0,
+        "authority_shrink_events": 3,
         "cancellations": 4,
         "child_faults": 4,
         "cross_agent_resource_leaks": 0,
-        "delegation_allows": 4,
-        "delegation_denies": 33,
-        "durable_operations": 14,
-        "host_budget_blocks": 1,
+        "delegation_allows": 5,
+        "delegation_denies": 45,
+        "dispatch_before_crash_count": 3,
+        "durable_operations": 3,
+        "external_effect_count": 3,
+        "host_budget_blocks": 4,
         "ipc_acks": 1600,
-        "ipc_deliveries": 1600,
+        "ipc_deliveries": 1603,
+        "ipc_redeliveries": 3,
         "ipc_sent": 1600,
         "logical_steps": 1600,
         "lost_durable_facts": 0,
+        "lost_mandatory_wal_obligations": 0,
         "m10_horizon_1000_pass": true,
         "m10_horizon_100_pass": true,
         "m10_horizon_500_pass": true,
@@ -1291,16 +1296,21 @@
         "m7_pass": true,
         "m8_pass": true,
         "m9_pass": true,
-        "process_budget_blocks": 22,
+        "mandatory_wal_obligations_surfaced": 1,
+        "process_budget_blocks": 4,
         "raw_record_count": 10,
-        "reconciliations": 14,
+        "reconcile_required_observed": 3,
+        "reconciliations": 3,
         "recovery_corruptions": 0,
         "requested_logical_steps": 1600,
         "resource_allowed": 161,
-        "resource_denied": 33,
+        "resource_denied": 39,
+        "runtime_object_replacements_verified": 36,
+        "runtime_restarts": 36,
         "scenario_count": 10,
         "scenario_pass_count": 10,
         "semantic_invariants_passed": true,
+        "stale_authority_restored": 0,
         "unauthorized_effects": 0,
         "unresolved_mandatory_wal": 0,
         "unsafe_duplicate_effects": 0
@@ -1340,8 +1350,11 @@
             "authority_escalations": 0,
             "child_scope_allowed": true,
             "child_secret_denied": true,
-            "delegation_allows": 1,
-            "delegation_denies": 3,
+            "delegation_allows": 2,
+            "delegation_denies": 6,
+            "grandchild_parent_bound": true,
+            "grandchild_scope_allowed": true,
+            "multi_hop_delegation_depth": 2,
             "success": true
           },
           "strategy": "child_grant_must_be_narrower_than_parent_authority"
@@ -1402,15 +1415,22 @@
           "benchmark": "runtimebench_v0.8_multi_agent",
           "case": "M8_integrated_multi_agent_recovery",
           "metrics": {
+            "acked_not_redelivered": 1,
             "durable_obligations": 1,
-            "ipc_messages_recovered": 0,
+            "ipc_messages_recovered": 3,
             "lost_durable_facts": 0,
+            "lost_mandatory_wal_obligations": 0,
+            "mandatory_wal_obligations_surfaced": 1,
+            "payload_grant_inert": 1,
+            "pending_delivered_after_recovery": 1,
             "reconcile_required": 1,
             "reconstructed_agents": 3,
             "reconstructed_processes": 4,
             "recovery_corruptions": 0,
+            "resource_refs_inert": 1,
             "resource_shares_recovered": 1,
             "success": true,
+            "unacked_redelivery": 1,
             "unresolved_mandatory_wal": 0
           },
           "strategy": "recovery_reconstructs_indexes_and_surfaces_durable_obligations"
@@ -1421,10 +1441,15 @@
           "metrics": {
             "authority_escalations": 0,
             "broad_restart_child_grants": 1,
-            "historical_delegation_facts": 1,
+            "broad_restart_grandchild_grants": 1,
+            "historical_delegation_facts": 2,
             "lost_durable_facts": 0,
+            "multi_hop_authority_shrink": true,
             "shrink_restart_authorized": false,
             "shrink_restart_child_grants": 0,
+            "shrink_restart_grandchild_authorized": false,
+            "shrink_restart_grandchild_grants": 0,
+            "stale_authority_restored": 0,
             "success": true
           },
           "strategy": "current_parent_authority_bounds_replayed_delegations"
@@ -1433,15 +1458,18 @@
           "benchmark": "runtimebench_v0.8_multi_agent",
           "case": "M10_long_horizon_multi_agent_composition",
           "metrics": {
-            "agent_budget_blocks": 0,
+            "agent_budget_blocks": 3,
             "authority_escalations": 0,
+            "authority_shrink_events": 3,
             "cancellations": 3,
             "child_faults": 3,
-            "crashes": 30,
+            "crashes": 33,
             "cross_agent_resource_leaks": 0,
             "delegation_allows": 3,
-            "delegation_denies": 30,
-            "durable_operations": 14,
+            "delegation_denies": 39,
+            "dispatch_before_crash_count": 3,
+            "durable_operations": 3,
+            "external_effect_count": 3,
             "horizon_1000_pass": true,
             "horizon_100_pass": true,
             "horizon_500_pass": true,
@@ -1451,21 +1479,25 @@
               500,
               1000
             ],
-            "host_budget_blocks": 0,
+            "host_budget_blocks": 3,
             "ipc_acks": 1600,
-            "ipc_deliveries": 1600,
-            "ipc_redeliveries": 0,
+            "ipc_deliveries": 1603,
+            "ipc_redeliveries": 3,
             "ipc_sent": 1600,
             "logical_steps": 1600,
             "lost_durable_facts": 0,
-            "process_budget_blocks": 21,
-            "reconciliations": 14,
-            "recoveries": 33,
+            "process_budget_blocks": 3,
+            "reconcile_required_observed": 3,
+            "reconciliations": 3,
+            "recoveries": 39,
             "recovery_corruptions": 0,
             "requested_logical_steps": 1600,
             "resource_allowed": 160,
-            "resource_denied": 30,
+            "resource_denied": 36,
+            "runtime_object_replacements_verified": 36,
+            "runtime_restarts": 36,
             "semantic_invariants_passed": true,
+            "stale_authority_restored": 0,
             "success": true,
             "unauthorized_effects": 0,
             "unresolved_mandatory_wal": 0,
@@ -1482,7 +1514,7 @@
       "success": true
     }
   ],
-  "commit": "c6c3524",
+  "commit": "813ca77",
   "environment": {
     "cpu_count": 16,
     "machine": "AMD64",
@@ -1491,7 +1523,7 @@
     "python": "3.12.10",
     "python_executable": "D:\\Users\\changxuan.xiao\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
   },
-  "generated_at": "2026-08-27T02:01:28.689097+00:00",
+  "generated_at": "2026-08-27T02:44:07.936257+00:00",
   "runtime_version": "AgentKernel V0.8",
   "runtimebench_version": "0.8",
   "summary": {
