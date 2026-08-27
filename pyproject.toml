@@ -14,7 +14,7 @@ dependencies = []
 test = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
-include = ["agentkernel*"]
+include = ["agentkernel*", "minicode*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
