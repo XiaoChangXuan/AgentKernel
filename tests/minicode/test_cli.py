@@ -222,6 +222,143 @@ def test_cli_openai_compatible_reads_agentkernel_environment_fallback(tmp_path, 
     assert seen_requests[0]["body"]["model"] == "agentkernel-model"  # type: ignore[index]
 
 
+def test_cli_openai_compatible_reads_workspace_env_file_without_flags(tmp_path, monkeypatch):
+    fixture = make_minicode_workspace(tmp_path)
+    (fixture.root / ".env").write_text(
+        "\n".join(
+            [
+                "AGENTKERNEL_LLM_BASE_URL=https://env-file-provider.example/v1",
+                "AGENTKERNEL_LLM_MODEL=env-file-model",
+                "AGENTKERNEL_LLM_API_KEY=env-file-secret",
+                "MINICODE_ALLOW_NETWORK=true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stdout = io.StringIO()
+    seen_requests: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        seen_requests.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "body": json.loads(request.data.decode("utf-8")),
+            }
+        )
+        return _FakeHTTPResponse(_openai_response(text="env file ok"))
+
+    for name in (
+        "MINICODE_LLM_BASE_URL",
+        "MINICODE_LLM_MODEL",
+        "MINICODE_LLM_API_KEY",
+        "AGENTKERNEL_LLM_BASE_URL",
+        "AGENTKERNEL_LLM_MODEL",
+        "AGENTKERNEL_LLM_API_KEY",
+        "MINICODE_ALLOW_NETWORK",
+        "MINICODE_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("minicode.model.urllib.request.urlopen", fake_urlopen)
+
+    exit_code = main(
+        [
+            "run",
+            "--workspace",
+            str(fixture.root),
+            "finish from env file",
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert exit_code == 0
+    assert payload["final_message"] == "env file ok"
+    assert seen_requests[0]["url"] == "https://env-file-provider.example/v1/chat/completions"
+    assert seen_requests[0]["authorization"] == "Bearer env-file-secret"
+    assert seen_requests[0]["body"]["model"] == "env-file-model"  # type: ignore[index]
+
+
+def test_cli_workspace_env_file_overrides_project_config_defaults(tmp_path, monkeypatch):
+    fixture = make_minicode_workspace(tmp_path)
+    config_dir = fixture.root / ".minicode"
+    config_dir.mkdir()
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model": "scripted",
+                "allow_network": False,
+                "openai_compatible": {
+                    "base_url": "https://project-provider.example/v1",
+                    "model": "project-model",
+                },
+                "defaults": {
+                    "timeout_ms": 1_000,
+                },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    (fixture.root / ".env").write_text(
+        "\n".join(
+            [
+                "AGENTKERNEL_LLM_BASE_URL=https://env-provider.example/v1",
+                "AGENTKERNEL_LLM_MODEL=env-model",
+                "AGENTKERNEL_LLM_API_KEY=env-secret",
+                "MINICODE_ALLOW_NETWORK=true",
+                "MINICODE_TIMEOUT_MS=9000",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    stdout = io.StringIO()
+    seen_requests: list[dict[str, object]] = []
+
+    def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        seen_requests.append(
+            {
+                "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
+                "body": json.loads(request.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        return _FakeHTTPResponse(_openai_response(text="env wins"))
+
+    for name in (
+        "MINICODE_LLM_BASE_URL",
+        "MINICODE_LLM_MODEL",
+        "MINICODE_LLM_API_KEY",
+        "AGENTKERNEL_LLM_BASE_URL",
+        "AGENTKERNEL_LLM_MODEL",
+        "AGENTKERNEL_LLM_API_KEY",
+        "MINICODE_ALLOW_NETWORK",
+        "MINICODE_MODEL",
+        "MINICODE_TIMEOUT_MS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("minicode.model.urllib.request.urlopen", fake_urlopen)
+
+    exit_code = main(
+        [
+            "run",
+            "--workspace",
+            str(fixture.root),
+            "finish from env file",
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert exit_code == 0
+    assert payload["final_message"] == "env wins"
+    assert seen_requests[0]["url"] == "https://env-provider.example/v1/chat/completions"
+    assert seen_requests[0]["authorization"] == "Bearer env-secret"
+    assert seen_requests[0]["body"]["model"] == "env-model"  # type: ignore[index]
+    assert seen_requests[0]["timeout"] == 9.0
+
+
 def test_cli_openai_compatible_reads_project_config(tmp_path, monkeypatch):
     fixture = make_minicode_workspace(tmp_path)
     config_dir = fixture.root / ".minicode"
@@ -234,6 +371,7 @@ def test_cli_openai_compatible_reads_project_config(tmp_path, monkeypatch):
                 "openai_compatible": {
                     "base_url": "https://project-provider.example/v1",
                     "model": "project-model",
+                    "api_key": "sk-project-config-secret",
                 },
                 "defaults": {
                     "timeout_ms": 12_000,
@@ -252,6 +390,7 @@ def test_cli_openai_compatible_reads_project_config(tmp_path, monkeypatch):
         seen_requests.append(
             {
                 "url": request.full_url,
+                "authorization": request.get_header("Authorization"),
                 "body": json.loads(request.data.decode("utf-8")),
                 "timeout": timeout,
             }
@@ -279,11 +418,13 @@ def test_cli_openai_compatible_reads_project_config(tmp_path, monkeypatch):
     assert payload["status"] == "completed"
     assert payload["final_message"] == "configured"
     assert seen_requests[0]["url"] == "https://project-provider.example/v1/chat/completions"
+    assert seen_requests[0]["authorization"] == "Bearer sk-project-config-secret"
     assert seen_requests[0]["timeout"] == 12.0
     assert body["model"] == "project-model"  # type: ignore[index]
+    assert "sk-project-config-secret" not in stdout.getvalue()
 
 
-def test_cli_project_config_must_not_contain_api_key(tmp_path):
+def test_cli_project_config_rejects_unrecognized_secret_fields(tmp_path):
     fixture = make_minicode_workspace(tmp_path)
     config_dir = fixture.root / ".minicode"
     config_dir.mkdir()
@@ -295,7 +436,7 @@ def test_cli_project_config_must_not_contain_api_key(tmp_path):
                 "openai_compatible": {
                     "base_url": "https://project-provider.example/v1",
                     "model": "project-model",
-                    "api_key": "sk-do-not-store-this",
+                    "authorization": "Bearer sk-do-not-store-this",
                 },
             },
             sort_keys=True,
@@ -664,6 +805,54 @@ def test_cli_chat_reports_live_progress_while_running(tmp_path, monkeypatch):
     assert "Done (" in output
     assert "MiniCode 已完成。" in output
     assert '"final_message"' not in output
+    assert stderr.getvalue() == ""
+
+
+def test_cli_chat_reports_tool_argument_progress(tmp_path, monkeypatch):
+    fixture = make_minicode_workspace(tmp_path)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    command = subprocess.list2cmdline([sys.executable, "-c", "print('progress ok')"])
+    responses = [
+        _openai_response(
+            tool_calls=[
+                _openai_tool_call(
+                    "call-command",
+                    "run_command",
+                    {"command": command, "mutation_intent": "read_only"},
+                ),
+            ]
+        ),
+        _openai_response(text="done"),
+    ]
+
+    def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+        return _FakeHTTPResponse(responses.pop(0))
+
+    monkeypatch.setattr("minicode.cli.CHAT_STATUS_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setenv("MINICODE_LLM_BASE_URL", "https://env-provider.example/v1")
+    monkeypatch.setenv("MINICODE_LLM_MODEL", "env-model")
+    monkeypatch.setattr("minicode.model.urllib.request.urlopen", fake_urlopen)
+
+    exit_code = main(
+        [
+            "chat",
+            "--workspace",
+            str(fixture.root),
+            "--model",
+            "openai-compatible",
+            "--allow-network",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+        stdin=io.StringIO("运行一个命令\n/exit\n"),
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "running tool: run_command: command=" in output
+    assert "done" in output
+    assert responses == []
     assert stderr.getvalue() == ""
 
 

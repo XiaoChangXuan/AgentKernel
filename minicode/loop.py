@@ -44,6 +44,10 @@ from .model import (
 )
 from .tools import (
     APPLY_PATCH_NAME,
+    LIST_FILES_NAME,
+    READ_FILE_NAME,
+    RUN_COMMAND_NAME,
+    SEARCH_FILES_NAME,
     DefaultShellHostPolicy,
     ShellHostPolicy,
     minicode_capability_grants,
@@ -351,7 +355,13 @@ class MiniCodeAgentLoop:
     async def _execute_tool(self, call: ToolCall, *, turn: int, step: int) -> ToolResult:
         self.trace.record(
             "tool/call",
-            {"turn": turn, "step": step, "tool": call.name, "call_id": call.call_id},
+            {
+                "turn": turn,
+                "step": step,
+                "tool": call.name,
+                "call_id": call.call_id,
+                "arguments": _summarize_tool_arguments(call.name, call.arguments),
+            },
         )
         self.session.append(EventType.TOOL_CALL, {"turn": turn, "step": step, **call.as_dict()})
         self.session.flush()
@@ -520,3 +530,50 @@ def _policy_from_approval(approval: ApprovalMode) -> DefaultShellHostPolicy:
         return False
 
     return DefaultShellHostPolicy(confirm_mutation=confirm)
+
+
+def _summarize_tool_arguments(tool_name: str, arguments: object) -> dict[str, JsonValue]:
+    if not isinstance(arguments, dict):
+        return {}
+    if tool_name == RUN_COMMAND_NAME:
+        return {
+            "command": _argument_preview(arguments.get("command")),
+            "cwd": _argument_preview(arguments.get("cwd", "."), limit=80),
+            "mutation_intent": _argument_preview(arguments.get("mutation_intent", "read_only"), limit=40),
+        }
+    if tool_name == READ_FILE_NAME:
+        summary: dict[str, JsonValue] = {"path": _argument_preview(arguments.get("path"), limit=160)}
+        if "start_line" in arguments:
+            summary["start_line"] = _json_scalar(arguments.get("start_line"))
+        if "end_line" in arguments:
+            summary["end_line"] = _json_scalar(arguments.get("end_line"))
+        return summary
+    if tool_name == SEARCH_FILES_NAME:
+        summary = {"query": _argument_preview(arguments.get("query")), "path": _argument_preview(arguments.get("path", "."), limit=120)}
+        if "glob" in arguments:
+            summary["glob"] = _argument_preview(arguments.get("glob"), limit=120)
+        return summary
+    if tool_name == LIST_FILES_NAME:
+        return {
+            "path": _argument_preview(arguments.get("path", "."), limit=120),
+            "recursive": _json_scalar(arguments.get("recursive", False)),
+        }
+    if tool_name == APPLY_PATCH_NAME:
+        patch = arguments.get("patch")
+        return {"patch_chars": len(patch) if isinstance(patch, str) else 0}
+    return {"keys": sorted(str(key) for key in arguments.keys())[:12]}
+
+
+def _argument_preview(value: object, *, limit: int = 180) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
+
+
+def _json_scalar(value: object) -> JsonValue:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)

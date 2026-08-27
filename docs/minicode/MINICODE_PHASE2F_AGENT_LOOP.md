@@ -18,7 +18,7 @@ Phase 2F adds MiniCode's coding harness loop without changing AgentKernel core. 
 
 `ScriptedModelAdapter` is the deterministic CI adapter. It records every `MiniCodeModelRequest` and returns queued `MiniCodeModelResponse` values or callback-generated responses. Exhaustion is reported as `ModelAdapterError("script_exhausted")`.
 
-`OpenAICompatibleAdapter` is opt-in. It requires either explicit `enabled=True` configuration or an injected client. Real-model calls are not used as deterministic test or CI oracles. API keys are read from environment only and are not exposed through public diagnostics.
+`OpenAICompatibleAdapter` is opt-in. It requires either explicit `enabled=True` configuration or an injected client. Real-model calls are not used as deterministic test or CI oracles. API keys may be read from environment or local ignored env files and are not exposed through public diagnostics.
 
 ## Loop State Machine
 
@@ -85,39 +85,46 @@ claim preemptive interruption of a blocking HTTP model request or shell command.
 
 `chat` is the human-facing interactive mode. Running `minicode` with no
 subcommand defaults to `chat`, discovers the current workspace, reads
-`<workspace>/.minicode/config.json` when present, and prints assistant answers as
-plain UTF-8 text instead of JSON. Type `/exit` or `/quit`, or press Esc in a
-Windows terminal, to leave the prompt.
+`<workspace>/.minicode/config.json`, `<workspace>/.env`, and
+`<workspace>/.minicode/.env` when present, and prints assistant answers as plain
+UTF-8 text instead of JSON. Type `/exit` or `/quit`, or press Esc in a Windows
+terminal, to leave the prompt.
 
 While a chat turn is running, the CLI prints observable progress from the
 MiniCode trace, for example `Working (3s • Esc to interrupt) - asking model` or
-`Working (5s • Esc to interrupt) - running tool: read_file`. In a Windows TTY,
-Esc requests cooperative cancellation through the Scheduler at the next safe
-point. Successful turns finish with `Done (Ns)`. Failed turns finish with
-`Failed (Ns)` and print the structured MiniCode status plus a safe provider
-diagnostic when the model adapter can expose one.
+`Working (34s • Esc to interrupt) - running tool: run_command: command=python -m pytest -q`.
+Tool arguments are summarized, not streamed in full. In a Windows TTY, Esc
+requests cooperative cancellation through the Scheduler at the next safe point.
+Successful turns finish with `Done (Ns)`. Failed turns finish with `Failed (Ns)`
+and print the structured MiniCode status plus a safe provider diagnostic when
+the model adapter can expose one.
 
 `run` remains the script-facing mode and continues to emit a single JSON object
 with `ensure_ascii=False`, so Chinese output is readable while automation keeps
 the same structured contract.
 
-Scripted runs remain the default and are the only deterministic CI oracle. Real-model runs require explicit `--model openai-compatible` and explicit `--allow-network`, unless both are supplied by project config.
+Scripted runs remain the default and are the only deterministic CI oracle.
+Real-model runs require OpenAI-compatible endpoint/model settings and explicit
+network opt-in, unless those defaults are supplied by project config or local
+env files.
 
 OpenAI-compatible model configuration:
 
 | Setting | Source | Required |
 | --- | --- | --- |
-| Model mode | `--model` or `.minicode/config.json` | no; defaults to `scripted` |
-| Base URL | `--base-url`, `MINICODE_LLM_BASE_URL`, `AGENTKERNEL_LLM_BASE_URL`, or `.minicode/config.json` | yes for `openai-compatible` |
-| Model name | `--model-name`, `MINICODE_LLM_MODEL`, `AGENTKERNEL_LLM_MODEL`, or `.minicode/config.json` | yes for `openai-compatible` |
-| API key | `MINICODE_LLM_API_KEY` or `AGENTKERNEL_LLM_API_KEY` | no |
-| Network opt-in | `--allow-network` or `.minicode/config.json` `allow_network` | yes for `openai-compatible` |
+| Model mode | `--model`, `.minicode/config.json`, `MINICODE_MODEL`, or inferred from provider env | no; defaults to `scripted` |
+| Base URL | `--base-url`, `MINICODE_LLM_BASE_URL`, `AGENTKERNEL_LLM_BASE_URL`, local env file, or `.minicode/config.json` | yes for `openai-compatible` |
+| Model name | `--model-name`, `MINICODE_LLM_MODEL`, `AGENTKERNEL_LLM_MODEL`, local env file, or `.minicode/config.json` | yes for `openai-compatible` |
+| API key | `MINICODE_LLM_API_KEY`, `AGENTKERNEL_LLM_API_KEY`, or local env file | no |
+| Network opt-in | `--allow-network`, `.minicode/config.json` `allow_network`, or `MINICODE_ALLOW_NETWORK` in the process/local env | yes for `openai-compatible` |
 
 The API key intentionally has no command-line flag and must not be stored in the
-project config file. Non-secret values may be stored in
-`<workspace>/.minicode/config.json` and overridden with CLI flags. The effective
-precedence is CLI option, then environment variable for provider endpoint/model,
-then project config, then built-in default.
+project JSON config. It may be placed in the process environment,
+`<workspace>/.env`, or `<workspace>/.minicode/.env` for local convenience, but
+real keys should not be committed. Non-secret values may also be stored in the
+config file and overridden with CLI flags. The effective precedence is CLI
+option, then process environment, then local env file, then project config, then
+built-in default.
 
 Project-local config example:
 
@@ -137,9 +144,18 @@ Project-local config example:
 }
 ```
 
-The repository includes `.minicode/config.example.json` as a template. Copy it
-to `.minicode/config.json` inside the workspace that MiniCode should operate on.
-Do not put `api_key`, bearer tokens, or authorization headers in this file;
+For the lowest-friction local setup, create `<workspace>/.env`:
+
+```text
+AGENTKERNEL_LLM_BASE_URL=http://llm.api.corp.qunar.com/v1
+AGENTKERNEL_LLM_MODEL=azure/gpt-5.4-2026-03-05
+AGENTKERNEL_LLM_API_KEY=<secret>
+MINICODE_ALLOW_NETWORK=true
+MINICODE_APPROVE=on-mutation
+MINICODE_MAX_TURNS=80
+```
+
+Do not put `api_key`, bearer tokens, or authorization headers in JSON config;
 MiniCode rejects secret-looking config keys before constructing a provider.
 
 OpenAI endpoint example:

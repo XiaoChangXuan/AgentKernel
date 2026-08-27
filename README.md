@@ -180,14 +180,21 @@ python -m minicode
 python -m minicode chat --workspace /path/to/project
 ```
 
-MiniCode reads non-secret defaults from `.minicode/config.json` when present.
-Keep provider API keys in environment variables such as
-`MINICODE_LLM_API_KEY`, not in the config file.
+MiniCode reads runtime defaults from `.minicode/config.json` when present, and
+also reads provider environment defaults from `<workspace>/.env` or
+`<workspace>/.minicode/.env`. For example, store
+`AGENTKERNEL_LLM_BASE_URL`, `AGENTKERNEL_LLM_MODEL`,
+`AGENTKERNEL_LLM_API_KEY`, and `MINICODE_ALLOW_NETWORK=true` once in a local
+ignored `.env` file, then run `python -m minicode` without retyping flags or
+PowerShell environment variables. You can also fill
+`openai_compatible.api_key` in `.minicode/config.json` for local convenience.
+Do not commit real keys.
 
 In interactive mode, MiniCode prints live status such as
-`Working (3s • Esc to interrupt) - asking model` and updates it as model
-requests and tool calls progress. The `run` command remains script-facing and
-emits JSON.
+`Working (3s • Esc to interrupt) - asking model` and
+`Working (34s • Esc to interrupt) - running tool: run_command:
+command=python -m pytest -q`. The `run` command remains script-facing and emits
+JSON.
 
 Run RuntimeBench without rewriting the frozen artifact:
 

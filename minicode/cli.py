@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Mapping
 import concurrent.futures
 import json
 import os
@@ -12,7 +13,7 @@ from typing import Sequence, TextIO, TypeVar
 
 from agentkernel import JsonlSessionPersistence, Session
 
-from .config import MiniCodeConfig, MiniCodeProjectConfig, load_project_config
+from .config import MiniCodeConfig, MiniCodeProjectConfig, load_environment_files, load_project_config
 from .errors import MiniCodeError
 from .loop import MiniCodeAgentLoop
 from .model import (
@@ -113,8 +114,9 @@ def main(
 
     try:
         workspace = discover_workspace(explicit_workspace=args.workspace)
+        env_file_values = load_environment_files(workspace.root)
         project_config = load_project_config(workspace.root, explicit_config=args.config)
-        config = _config_from_args(args, project_config)
+        config = _config_from_args(args, project_config, env_file_values)
         config.validate()
     except MiniCodeError as exc:
         _print_minicode_error(exc, err, human=args.command == "chat")
@@ -176,6 +178,7 @@ def main(
         model = _model_from_args(
             args,
             project_config,
+            env_file_values,
             model_mode=config.model,
             allow_network=not config.no_network,
             timeout_ms=config.timeout_ms,
@@ -442,7 +445,8 @@ def _chat_progress_message(event_type: str, data: object) -> str:
         return f"model error: {code}"
     if event_type == "tool/call":
         tool = data.get("tool") or "tool"
-        return f"running tool: {tool}{suffix}"
+        detail = _tool_progress_detail(data.get("arguments"))
+        return f"running tool: {tool}{detail}{suffix}"
     if event_type == "tool/result":
         tool = data.get("tool") or "tool"
         ok = "ok" if data.get("ok") is True else "failed"
@@ -459,6 +463,35 @@ def _turn_step_suffix(turn: object, step: object) -> str:
         return f" (turn {turn}, step {step})"
     if isinstance(turn, int):
         return f" (turn {turn})"
+    return ""
+
+
+def _tool_progress_detail(arguments: object) -> str:
+    if not isinstance(arguments, dict):
+        return ""
+    if "command" in arguments:
+        parts = [f"command={arguments.get('command')}"]
+        cwd = arguments.get("cwd")
+        if cwd not in {None, "", "."}:
+            parts.append(f"cwd={cwd}")
+        mutation = arguments.get("mutation_intent")
+        if mutation not in {None, "", "read_only"}:
+            parts.append(f"intent={mutation}")
+        return ": " + ", ".join(parts)
+    if "path" in arguments and "query" in arguments:
+        return f": query={arguments.get('query')}, path={arguments.get('path')}"
+    if "path" in arguments:
+        detail = f": path={arguments.get('path')}"
+        start = arguments.get("start_line")
+        end = arguments.get("end_line")
+        if start is not None or end is not None:
+            detail += f", lines={start or ''}-{end or ''}"
+        return detail
+    if "patch_chars" in arguments:
+        return f": patch_chars={arguments.get('patch_chars')}"
+    keys = arguments.get("keys")
+    if isinstance(keys, list) and keys:
+        return f": args={','.join(str(key) for key in keys[:6])}"
     return ""
 
 
@@ -576,14 +609,37 @@ def _ensure_common_args(args: argparse.Namespace) -> None:
             setattr(args, name, value)
 
 
-def _config_from_args(args: argparse.Namespace, project_config: MiniCodeProjectConfig) -> MiniCodeConfig:
-    allow_network = _first_present(args.allow_network, project_config.allow_network, False)
+def _config_from_args(
+    args: argparse.Namespace,
+    project_config: MiniCodeProjectConfig,
+    env_file_values: Mapping[str, str],
+) -> MiniCodeConfig:
+    env_model = _env_str("MINICODE_MODEL", env_file_values)
+    if env_model is None and _has_openai_compatible_env_config(env_file_values):
+        env_model = "openai-compatible"
+    allow_network = _first_present(
+        args.allow_network,
+        _first_present(_env_bool("MINICODE_ALLOW_NETWORK", env_file_values), project_config.allow_network, False),
+        False,
+    )
     return MiniCodeConfig(
         workspace=args.workspace,
-        model=_first_present(args.model, project_config.model, "scripted"),
-        max_turns=_first_present(args.max_turns, project_config.max_turns, 20),
-        timeout_ms=_first_present(args.timeout_ms, project_config.timeout_ms, 30_000),
-        approve=_first_present(args.approve, project_config.approve, "on-mutation"),
+        model=_first_present(args.model, _first_present(env_model, project_config.model, "scripted"), "scripted"),
+        max_turns=_first_present(
+            args.max_turns,
+            _first_present(_env_int("MINICODE_MAX_TURNS", env_file_values), project_config.max_turns, 20),
+            20,
+        ),
+        timeout_ms=_first_present(
+            args.timeout_ms,
+            _first_present(_env_int("MINICODE_TIMEOUT_MS", env_file_values), project_config.timeout_ms, 30_000),
+            30_000,
+        ),
+        approve=_first_present(
+            args.approve,
+            _first_present(_env_approval("MINICODE_APPROVE", env_file_values), project_config.approve, "on-mutation"),
+            "on-mutation",
+        ),
         trace_jsonl=args.trace_jsonl,
         no_network=not allow_network,
     )
@@ -592,6 +648,7 @@ def _config_from_args(args: argparse.Namespace, project_config: MiniCodeProjectC
 def _model_from_args(
     args: argparse.Namespace,
     project_config: MiniCodeProjectConfig,
+    env_file_values: Mapping[str, str],
     *,
     model_mode: str,
     allow_network: bool,
@@ -601,6 +658,7 @@ def _model_from_args(
         return _openai_compatible_model_from_args(
             args,
             project_config,
+            env_file_values,
             allow_network=allow_network,
             timeout_ms=timeout_ms,
         )
@@ -643,6 +701,7 @@ def _scripted_model_from_args(args: argparse.Namespace) -> ScriptedModelAdapter:
 def _openai_compatible_model_from_args(
     args: argparse.Namespace,
     project_config: MiniCodeProjectConfig,
+    env_file_values: Mapping[str, str],
     *,
     allow_network: bool,
     timeout_ms: int,
@@ -650,19 +709,19 @@ def _openai_compatible_model_from_args(
     if not allow_network:
         raise MiniCodeError(
             "network_not_allowed",
-            "openai-compatible model runs require explicit --allow-network or .minicode/config.json allow_network",
+            "openai-compatible model runs require explicit --allow-network, MINICODE_ALLOW_NETWORK=true, or .minicode/config.json allow_network",
             retryable=False,
         )
     base_url = (
         args.base_url
-        or os.environ.get("MINICODE_LLM_BASE_URL")
-        or os.environ.get("AGENTKERNEL_LLM_BASE_URL")
+        or _env_str("MINICODE_LLM_BASE_URL", env_file_values)
+        or _env_str("AGENTKERNEL_LLM_BASE_URL", env_file_values)
         or project_config.base_url
     )
     model = (
         args.model_name
-        or os.environ.get("MINICODE_LLM_MODEL")
-        or os.environ.get("AGENTKERNEL_LLM_MODEL")
+        or _env_str("MINICODE_LLM_MODEL", env_file_values)
+        or _env_str("AGENTKERNEL_LLM_MODEL", env_file_values)
         or project_config.model_name
     )
     if not base_url:
@@ -681,7 +740,11 @@ def _openai_compatible_model_from_args(
         OpenAICompatibleConfig(
             base_url=base_url,
             model=model,
-            api_key=os.environ.get("MINICODE_LLM_API_KEY") or os.environ.get("AGENTKERNEL_LLM_API_KEY"),
+            api_key=(
+                _env_str("MINICODE_LLM_API_KEY", env_file_values)
+                or _env_str("AGENTKERNEL_LLM_API_KEY", env_file_values)
+                or project_config.api_key
+            ),
             timeout_seconds=timeout_ms / 1000,
             enabled=True,
         )
@@ -694,6 +757,73 @@ def _first_present(first: T | None, second: T | None, third: T) -> T:
     if second is not None:
         return second
     return third
+
+
+def _env_str(name: str, env_file_values: Mapping[str, str]) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        value = env_file_values.get(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _env_bool(name: str, env_file_values: Mapping[str, str]) -> bool | None:
+    value = _env_str(name, env_file_values)
+    if value is None:
+        return None
+    normalized = value.lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise MiniCodeError(
+        "invalid_configuration",
+        f"{name} must be true or false",
+        retryable=False,
+    )
+
+
+def _env_int(name: str, env_file_values: Mapping[str, str]) -> int | None:
+    value = _env_str(name, env_file_values)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise MiniCodeError(
+            "invalid_configuration",
+            f"{name} must be a positive integer",
+            retryable=False,
+        ) from exc
+    if parsed <= 0:
+        raise MiniCodeError(
+            "invalid_configuration",
+            f"{name} must be a positive integer",
+            retryable=False,
+        )
+    return parsed
+
+
+def _env_approval(name: str, env_file_values: Mapping[str, str]) -> str | None:
+    value = _env_str(name, env_file_values)
+    if value is None:
+        return None
+    if value in {"never", "on-mutation", "always"}:
+        return value
+    raise MiniCodeError(
+        "invalid_configuration",
+        f"{name} must be never, on-mutation, or always",
+        retryable=False,
+    )
+
+
+def _has_openai_compatible_env_config(env_file_values: Mapping[str, str]) -> bool:
+    return bool(
+        (_env_str("MINICODE_LLM_BASE_URL", env_file_values) or _env_str("AGENTKERNEL_LLM_BASE_URL", env_file_values))
+        and (_env_str("MINICODE_LLM_MODEL", env_file_values) or _env_str("AGENTKERNEL_LLM_MODEL", env_file_values))
+    )
 
 
 if __name__ == "__main__":
