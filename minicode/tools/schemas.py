@@ -10,10 +10,12 @@ LIST_FILES_NAME: Final = "list_files"
 SEARCH_FILES_NAME: Final = "search_files"
 READ_FILE_NAME: Final = "read_file"
 APPLY_PATCH_NAME: Final = "apply_patch"
+RUN_COMMAND_NAME: Final = "run_command"
 
 MINICODE_TOOL_PREFIX: Final = "tool://minicode"
 WORKSPACE_READ_ACTION: Final = "workspace.read"
 WORKSPACE_WRITE_ACTION: Final = "workspace.write"
+SHELL_EXECUTE_ACTION: Final = "shell.execute"
 
 DEFAULT_MAX_LIST_ENTRIES: Final = 100
 MAX_LIST_ENTRIES: Final = 1_000
@@ -23,6 +25,11 @@ MAX_CONTEXT_LINES: Final = 5
 DEFAULT_READ_MAX_BYTES: Final = 32_000
 MAX_READ_BYTES: Final = 64_000
 LINE_PREVIEW_CHARS: Final = 400
+DEFAULT_COMMAND_TIMEOUT_MS: Final = 30_000
+MAX_COMMAND_TIMEOUT_MS: Final = 120_000
+DEFAULT_COMMAND_PREVIEW_BYTES: Final = 4_096
+MAX_COMMAND_PREVIEW_BYTES: Final = 16_384
+DEFAULT_COMMAND_CAPTURE_BYTES: Final = 8 * 1024 * 1024
 
 DEFAULT_IGNORED_NAMES: Final = frozenset(
     {
@@ -50,6 +57,16 @@ def workspace_resource(workspace_id: str, relative_path: str) -> str:
     if relative_path == ".":
         return f"workspace://{workspace_id}"
     return f"workspace://{workspace_id}/{relative_path}"
+
+
+def shell_scope(workspace_id: str) -> str:
+    return f"shell://workspace/{workspace_id}/**"
+
+
+def shell_resource(workspace_id: str, relative_path: str) -> str:
+    if relative_path == ".":
+        return f"shell://workspace/{workspace_id}"
+    return f"shell://workspace/{workspace_id}/{relative_path}"
 
 
 def list_files_schema() -> ToolSchema:
@@ -137,6 +154,33 @@ def apply_patch_schema() -> ToolSchema:
                 "patch": {"type": "string"},
             },
             "required": ["patch"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def run_command_schema() -> ToolSchema:
+    return ToolSchema(
+        name=RUN_COMMAND_NAME,
+        description="Run a bounded, synchronous command inside the MiniCode workspace.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "cwd": {"type": "string", "default": "."},
+                "timeout_ms": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": MAX_COMMAND_TIMEOUT_MS,
+                    "default": DEFAULT_COMMAND_TIMEOUT_MS,
+                },
+                "mutation_intent": {
+                    "type": "string",
+                    "enum": ["read_only", "may_mutate"],
+                    "default": "read_only",
+                },
+            },
+            "required": ["command"],
             "additionalProperties": False,
         },
     )
