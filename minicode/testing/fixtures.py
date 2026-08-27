@@ -16,6 +16,7 @@ class MiniCodeWorkspaceFixture:
     build_output: Path
     binary_file: Path
     latin1_file: Path
+    crlf_file: Path
     root_agents: Path
     nested_agents: Path
 
@@ -83,6 +84,8 @@ def make_minicode_workspace(tmp_path: Path, *, git: bool = True, nested_agents: 
     binary_file.write_bytes(b"\x00\x01binary")
     latin1_file = root / "latin1.txt"
     latin1_file.write_bytes("caf\xe9".encode("latin-1"))
+    crlf_file = root / "crlf.txt"
+    crlf_file.write_bytes(b"alpha\r\nbeta\r\ngamma\r\n")
     (outside / "secret.txt").write_text("outside\n", encoding="utf-8")
 
     return MiniCodeWorkspaceFixture(
@@ -96,6 +99,7 @@ def make_minicode_workspace(tmp_path: Path, *, git: bool = True, nested_agents: 
         build_output=build_output,
         binary_file=binary_file,
         latin1_file=latin1_file,
+        crlf_file=crlf_file,
         root_agents=root_agents,
         nested_agents=nested_file,
     )

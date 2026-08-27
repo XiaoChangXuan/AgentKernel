@@ -9,9 +9,11 @@ from agentkernel.protocol import JsonValue, ToolSchema
 LIST_FILES_NAME: Final = "list_files"
 SEARCH_FILES_NAME: Final = "search_files"
 READ_FILE_NAME: Final = "read_file"
+APPLY_PATCH_NAME: Final = "apply_patch"
 
 MINICODE_TOOL_PREFIX: Final = "tool://minicode"
 WORKSPACE_READ_ACTION: Final = "workspace.read"
+WORKSPACE_WRITE_ACTION: Final = "workspace.write"
 
 DEFAULT_MAX_LIST_ENTRIES: Final = 100
 MAX_LIST_ENTRIES: Final = 1_000
@@ -120,6 +122,21 @@ def read_file_schema() -> ToolSchema:
                 },
             },
             "required": ["path"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def apply_patch_schema() -> ToolSchema:
+    return ToolSchema(
+        name=APPLY_PATCH_NAME,
+        description="Apply a Codex-style patch inside the MiniCode workspace.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "patch": {"type": "string"},
+            },
+            "required": ["patch"],
             "additionalProperties": False,
         },
     )
