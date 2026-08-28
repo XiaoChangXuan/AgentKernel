@@ -1,0 +1,314 @@
+{
+  "cases": [
+    {
+      "case_id": "D1",
+      "evidence": {
+        "read_denied": true,
+        "uri_observed": "memory://agent-a/private/mem_0000"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "MemoryService.read",
+        "CapabilityEvaluator"
+      ],
+      "name": "URI Is Not Authority",
+      "oracle": "Knowing memory://... without a current grant must deny.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D2",
+      "evidence": {
+        "delegation_allowed": true,
+        "memory_id": "mem_0000"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "CapabilityDelegator",
+        "memory.read"
+      ],
+      "name": "Delegated Read",
+      "oracle": "A delegated memory.read grant allows the child Agent to read exactly that memory.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D3",
+      "evidence": {
+        "admit_denied": true,
+        "can_read": true,
+        "forget_denied": true,
+        "stale_denied": true,
+        "write_denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "memory.read",
+        "memory.write",
+        "memory.forget",
+        "memory.admit"
+      ],
+      "name": "Read/Mutation Separation",
+      "oracle": "memory.read never implies lifecycle or admission mutation authority.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D4",
+      "evidence": {
+        "delegation_allowed": true,
+        "lifecycle_state": "STALE",
+        "mutation_actor": "agent-b",
+        "owner_agent_id": "agent-a"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "CapabilityDelegator",
+        "memory.write"
+      ],
+      "name": "Delegated Mutation",
+      "oracle": "Delegated mutation authority records the actor without changing owner.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D5",
+      "evidence": {
+        "admit_denied_for_proposer": true,
+        "authorized_admit_owner": "agent-a",
+        "proposal_id": "mpr_0000",
+        "proposer_agent_id": "agent-b"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "memory.propose",
+        "memory.admit"
+      ],
+      "name": "Admission Separation",
+      "oracle": "memory.propose does not imply memory.admit.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D6",
+      "evidence": {
+        "after_denied": true,
+        "before_read": "mem_0000"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "CapabilityEvaluator",
+        "memory.read"
+      ],
+      "name": "Revocation By Evaluator",
+      "oracle": "Removing a grant from the current evaluator denies future access.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D7",
+      "evidence": {
+        "visible_after": 0,
+        "visible_before": 1
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "MemoryService.search"
+      ],
+      "name": "Search Revocation",
+      "oracle": "Fresh search excludes memory no longer authorized.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D8",
+      "evidence": {
+        "context_pages_after": 0,
+        "visible_after": 0,
+        "visible_before": 1
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "Context VM",
+        "MemoryService.search"
+      ],
+      "name": "Context Revocation",
+      "oracle": "Fresh Context projection excludes memory no longer authorized.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D9",
+      "evidence": {
+        "future_read_denied": true,
+        "historical_content": "Observed before revoke."
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "Session",
+        "MemoryService.read"
+      ],
+      "name": "Historical Observation",
+      "oracle": "Old Session observations remain durable even when future reads are denied.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D10",
+      "evidence": {
+        "future_read_denied": true,
+        "payload": {
+          "memory_uri": "memory://agent-a/private/mem_0000"
+        }
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "KernelIPC",
+        "MemoryService.read"
+      ],
+      "name": "IPC Is Not Authority",
+      "oracle": "A memory URI carried in IPC payload is data, not authority.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D11",
+      "evidence": {
+        "listed_memory_ids": [
+          "mem_0000",
+          "mem_0002"
+        ],
+        "resource_denied_with_memory_grant": true,
+        "resource_share_payload_resource_id": "res_0001",
+        "visible_decisions": [
+          "mpr_0000"
+        ],
+        "visible_proposals": [
+          "mpr_0000"
+        ]
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "MemoryService.list",
+        "MemoryService.history",
+        "ResourceShareGrant"
+      ],
+      "name": "Enumeration Isolation",
+      "oracle": "List/history/proposal enumeration filters per object scope; ResourceShare is not Memory authority.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D12",
+      "evidence": {
+        "denied": true,
+        "grant_subject": "agent-a",
+        "process_agent_id": "agent-b",
+        "process_id": "agent-a",
+        "request_subject": "agent-b"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "ProcessControlBlock",
+        "CapabilityEvaluator"
+      ],
+      "name": "Agent/Process Separation",
+      "oracle": "Authority subject is Agent identity, not Process id.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D13",
+      "evidence": {
+        "private_denied": true,
+        "result_namespaces": [
+          "public"
+        ]
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "memory_namespace_scope",
+        "MemoryService.search"
+      ],
+      "name": "Scope Isolation",
+      "oracle": "A namespace grant reveals matching scope only.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D14",
+      "evidence": {
+        "delegation_allowed": false,
+        "reason": "parent_authority_not_found"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "CapabilityDelegator"
+      ],
+      "name": "Delegation Attenuation",
+      "oracle": "Delegation cannot broaden parent authority.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D15",
+      "evidence": {
+        "has_untrusted_origin": true,
+        "source_class": "TOOL_DERIVED",
+        "unauthorized_denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "MemoryProposal",
+        "CapabilityEvaluator"
+      ],
+      "name": "Trust Orthogonality",
+      "oracle": "Trust/source class does not override read authority.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D16",
+      "evidence": {
+        "lifecycle_state": "STALE",
+        "unauthorized_denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no cryptographic secrecy or information-flow control claim."
+      ],
+      "mechanism_under_test": [
+        "memory/stale",
+        "memory.read"
+      ],
+      "name": "Lifecycle Orthogonality",
+      "oracle": "Lifecycle state does not create or remove authority by itself.",
+      "status": "PASS"
+    }
+  ],
+  "commit": "7fb53af",
+  "decision": "PASS",
+  "deterministic": true,
+  "failed": 0,
+  "network": "not_used",
+  "offline": true,
+  "passed": 16,
+  "runtime_version": "AgentKernel V0.9D",
+  "timestamp": "2026-08-28T08:12:42.490508+00:00",
+  "total": 16,
+  "version": "0.9D"
+}

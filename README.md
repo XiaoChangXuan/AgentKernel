@@ -85,6 +85,7 @@ External World
 | V0.9 | Persistent Memory：跨 Session、Agent-scoped、带 provenance、Capability-enforced，并通过 Context VM 有界投影 |
 | V0.9B | Memory Correctness：staleness、explicit conflict、supersession、freshness provenance 与 active retrieval filtering |
 | V0.9C | Memory Trust Boundary：memory proposal、durable admission decision、quarantine/rejection、provenance-aware Context filtering |
+| V0.9D | Shared Memory Authority：共享 Memory 只由当前 Capability evaluation 授权，URI / IPC payload / ResourceShare payload / 历史观察都不是权限 |
 
 ## Kernel 不变量
 
@@ -245,6 +246,45 @@ default projection. It does not claim to solve prompt injection or verify truth;
 it prevents untrusted memory proposals from silently becoming active persistent
 memory under the tested runtime contract.
 
+V0.9D 新增 Shared Memory Authority 评测：
+
+```bash
+python -m benchmarks.memory_authority
+```
+
+机器可读结果：
+
+```text
+benchmarks/results/memory_authority_v0.9d.json
+```
+
+当前 Memory Authority：
+
+| Case | Result |
+| --- | --- |
+| D1 URI Is Not Authority | PASS |
+| D2 Delegated Read | PASS |
+| D3 Read/Mutation Separation | PASS |
+| D4 Delegated Mutation | PASS |
+| D5 Admission Separation | PASS |
+| D6 Revocation By Evaluator | PASS |
+| D7 Search Revocation | PASS |
+| D8 Context Revocation | PASS |
+| D9 Historical Observation | PASS |
+| D10 IPC Is Not Authority | PASS |
+| D11 Enumeration Isolation | PASS |
+| D12 Agent/Process Separation | PASS |
+| D13 Scope Isolation | PASS |
+| D14 Delegation Attenuation | PASS |
+| D15 Trust Orthogonality | PASS |
+| D16 Lifecycle Orthogonality | PASS |
+
+V0.9D keeps shared Memory authority inside the existing Capability system.
+Memory URI, memory id, IPC payload, ResourceShare payload, ResourceHandle-style
+refs, Context observations, and old Session observations are data, not
+authority. Revocation means future access is denied by the current evaluator;
+old durable observations remain historical facts.
+
 ## 快速运行
 
 要求 Python 3.11 或更新版本。基础示例没有必需的第三方运行时依赖。
@@ -396,6 +436,7 @@ docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md
 - [V0.9 Persistent Memory](docs/memory/V0.9_PERSISTENT_MEMORY.md)
 - [V0.9B Memory Correctness](docs/memory/V0.9B_MEMORY_CORRECTNESS.md)
 - [V0.9C Memory Trust Boundary](docs/memory/V0.9C_MEMORY_TRUST.md)
+- [V0.9D Shared Memory Authority](docs/memory/V0.9D_SHARED_MEMORY_AUTHORITY.md)
 - [MiniCode Phase 2F Workload Evaluation](docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md)
 
 教程：
@@ -438,6 +479,7 @@ V0.8 alpha 只支持有边界的 runtime-mechanism claim：
 - Persistent Memory 能在 deterministic offline fixtures 中跨 Session 保留带 provenance 的语义记忆，并保持 capability enforcement、semantic forget、supersede、bounded Context projection 和 rebuildable lexical index 不变量。
 - Memory Correctness 能在 deterministic offline fixtures 中显式保存 staleness、conflict、supersede chain 和 freshness provenance，并保持 default active retrieval/projection filtering。
 - Memory Trust Boundary 能在 deterministic offline fixtures 中阻止 untrusted/model-proposed information 绕过 explicit admission mechanism，防止它静默成为 active persistent memory。
+- Shared Memory Authority 能在 deterministic offline fixtures 中证明 Memory URI、IPC payload、ResourceShare payload、ResourceHandle-style refs 和历史观察都不是 authority；未来 Memory 访问由当前 Capability evaluation 决定。
 
 ## 限制
 
@@ -446,6 +488,8 @@ AgentKernel V0.9 alpha 尚不包含：
 - 通用 RAG framework。
 - embedding service 或 vector database。
 - 自动判断“什么值得记住”的复杂 memory policy。
+- Memory ACL、Memory role、Memory permission store 或独立 Memory sharing authority。
+- cryptographic confidentiality、secure deletion 或 full information-flow control。
 - 自动 truth verification、LLM contradiction judge 或 memory poisoning policy。
 - 自动 prompt-injection detection 或外部内容安全判断。
 - secure physical deletion。
@@ -469,5 +513,5 @@ API provider、网络服务、统计重复运行分析或生产 workload trace�
 ## Roadmap
 
 - V0.8：Multi-Agent Runtime alpha release freeze。
-- V0.9：Persistent Memory alpha implementation。
+- V0.9：Persistent Memory / Correctness / Trust / Shared Authority alpha implementation。
 - V1.0：Stable Agent Runtime Kernel baseline。

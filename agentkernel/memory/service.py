@@ -138,18 +138,19 @@ class MemoryService:
     ) -> tuple[MemoryProposal, ...]:
         """List durable proposals for explicit audit/debug views."""
 
-        scope = (
-            f"memory://{owner_agent_id}/**"
-            if namespace is None
-            else memory_namespace_scope(owner_agent_id, namespace)
-        )
-        self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
+        self._require_evaluator(agent_id, MEMORY_READ_ACTION, capability_evaluator)
         states = None if include_states is None else set(include_states)
         proposals = [
             proposal
             for proposal in self._project_proposals_by_id().values()
             if proposal.owner_agent_id == owner_agent_id
             and (namespace is None or proposal.namespace == namespace)
+            and self._is_authorized(
+                agent_id,
+                MEMORY_READ_ACTION,
+                memory_namespace_scope(proposal.owner_agent_id, proposal.namespace),
+                capability_evaluator,
+            )
             and (states is None or proposal.admission_state in states)
         ]
         proposals.sort(key=lambda item: (item.created_at, item.proposal_id))
@@ -166,17 +167,18 @@ class MemoryService:
     ) -> tuple[MemoryAdmissionRecord, ...]:
         """Return durable admission decisions after memory.read authorization."""
 
-        scope = (
-            f"memory://{owner_agent_id}/**"
-            if namespace is None
-            else memory_namespace_scope(owner_agent_id, namespace)
-        )
-        self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
+        self._require_evaluator(agent_id, MEMORY_READ_ACTION, capability_evaluator)
         proposal_ids = {
             proposal.proposal_id
             for proposal in self._project_proposals_by_id().values()
             if proposal.owner_agent_id == owner_agent_id
             and (namespace is None or proposal.namespace == namespace)
+            and self._is_authorized(
+                agent_id,
+                MEMORY_READ_ACTION,
+                memory_namespace_scope(proposal.owner_agent_id, proposal.namespace),
+                capability_evaluator,
+            )
         }
         records = [
             record
@@ -368,17 +370,17 @@ class MemoryService:
     ) -> tuple[MemoryRecord, ...]:
         """List projected memories for one owner, optionally namespace-filtered."""
 
-        scope = (
-            f"memory://{owner_agent_id}/**"
-            if namespace is None
-            else memory_namespace_scope(owner_agent_id, namespace)
-        )
-        self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
         records = [
             record
             for record in self._project_by_id(include_inactive=True).values()
             if record.owner_agent_id == owner_agent_id
             and (namespace is None or record.namespace == namespace)
+            and self._is_authorized(
+                agent_id,
+                MEMORY_READ_ACTION,
+                record.uri,
+                capability_evaluator,
+            )
             and _visible_for_options(
                 record,
                 include_inactive=include_inactive,
@@ -432,12 +434,6 @@ class MemoryService:
             raise ValueError("search limit must be a positive integer")
         if not isinstance(query, str):
             raise TypeError("search query must be text")
-        scope = (
-            f"memory://{owner_agent_id}/**"
-            if namespace is None
-            else memory_namespace_scope(owner_agent_id, namespace)
-        )
-        self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
         self._ensure_index()
         query_tokens = _tokens(query)
         indexed_ids: set[str] | None = None
@@ -452,6 +448,12 @@ class MemoryService:
             if record.owner_agent_id == owner_agent_id
             and (namespace is None or record.namespace == namespace)
             and (indexed_ids is None or record.memory_id in indexed_ids)
+            and self._is_authorized(
+                agent_id,
+                MEMORY_READ_ACTION,
+                record.uri,
+                capability_evaluator,
+            )
             and _visible_for_options(
                 record,
                 include_inactive=False,
@@ -660,6 +662,27 @@ class MemoryService:
             AuthorizationRequest(agent_id=agent_id, action=action, resource=resource)
         )
         if not decision.allowed:
+            raise MemoryAccessDenied(f"agent lacks {action} capability for memory")
+
+    def _is_authorized(
+        self,
+        agent_id: str,
+        action: str,
+        resource: str,
+        capability_evaluator: CapabilityEvaluator | None,
+    ) -> bool:
+        self._require_evaluator(agent_id, action, capability_evaluator)
+        return capability_evaluator.authorize(
+            AuthorizationRequest(agent_id=agent_id, action=action, resource=resource)
+        ).allowed
+
+    def _require_evaluator(
+        self,
+        agent_id: str,
+        action: str,
+        capability_evaluator: CapabilityEvaluator | None,
+    ) -> None:
+        if capability_evaluator is None or not capability_evaluator.grants:
             raise MemoryAccessDenied(f"agent lacks {action} capability for memory")
 
     def _resolve(self, uri_or_memory_id: str, *, include_inactive: bool = False) -> MemoryRecord:
