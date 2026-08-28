@@ -539,7 +539,7 @@ class InteractiveLab:
 
 class V01ExecutionSpineLab(InteractiveLab):
     title = "V0.1 Execution Spine Lab"
-    question = "一个真实模型提出的 ToolCall 进入 Kernel 后发生什么？"
+    question = "一个 LLM ToolCall 进入 Kernel 后发生什么？"
 
     def setup(self) -> dict[str, Any]:
         session = Session("lab-v01-session")
