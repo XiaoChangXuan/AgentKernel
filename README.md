@@ -70,7 +70,7 @@ External World
 
 ## 当前能力
 
-当前 V0.8 alpha baseline 包含：
+当前 V0.9 alpha baseline 包含：
 
 | 版本 | 机制 |
 | --- | --- |
@@ -82,6 +82,7 @@ External World
 | V0.6 | Capability core，以及 Tool / Resource / Durable 边界 enforcement |
 | V0.7 | Process runtime、cooperative scheduler 与 runtime accounting |
 | V0.8 | Agent Registry、Process Tree、Capability Delegation、Kernel IPC、Resource Sharing、runtime isolation、integrated multi-agent recovery 与 Multi-Agent RuntimeBench |
+| V0.9 | Persistent Memory：跨 Session、Agent-scoped、带 provenance、Capability-enforced，并通过 Context VM 有界投影 |
 
 ## Kernel 不变量
 
@@ -145,6 +146,36 @@ decision = PASS
 
 B8 覆盖 M1-M10 多 Agent 运行时不变量。M10 在 100、500、1000 logical
 steps 的 deterministic offline profiles 下通过。
+
+## MemoryBench
+
+V0.9 新增 Persistent Memory 评测：
+
+```bash
+python -m benchmarks.memorybench
+```
+
+机器可读结果：
+
+```text
+benchmarks/results/memorybench_v0.9.json
+```
+
+当前 MemoryBench：
+
+| Case | Result |
+| --- | --- |
+| M1 Cross-session persistence | PASS |
+| M2 Provenance | PASS |
+| M3 Supersede | PASS |
+| M4 Forget | PASS |
+| M5 Capability isolation | PASS |
+| M6 Delegated read | PASS |
+| M7 Context boundedness | PASS |
+| M8 Index rebuild | PASS |
+
+V0.9 adds cross-session persistent memory with provenance, capability enforcement,
+explicit lifecycle, deterministic lexical retrieval, and bounded context projection.
 
 ## 快速运行
 
@@ -294,6 +325,7 @@ docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md
 - [V0.8 Release Review](docs/releases/V0.8_RELEASE_REVIEW.md)
 - [V0.8 Release Notes](docs/releases/V0.8_RELEASE_NOTES.md)
 - [V0.8 RuntimeBench](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+- [V0.9 Persistent Memory](docs/memory/V0.9_PERSISTENT_MEMORY.md)
 - [MiniCode Phase 2F Workload Evaluation](docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md)
 
 教程：
@@ -333,12 +365,16 @@ V0.8 alpha 只支持有边界的 runtime-mechanism claim：
 - V0.1-V0.8 runtime mechanisms 在 deterministic single-agent workloads 中保持已测试不变量。
 - V0.8 multi-agent mechanisms 在 deterministic offline fixtures 中保持已测试的 identity、delegation、IPC、resource sharing、budget、fault、cancellation 和 recovery invariants。
 - Multi-agent recovery 能从 durable semantic facts 和当前配置重建运行时机制，不恢复 stale runtime-only authority。
+- Persistent Memory 能在 deterministic offline fixtures 中跨 Session 保留带 provenance 的语义记忆，并保持 capability enforcement、semantic forget、supersede、bounded Context projection 和 rebuildable lexical index 不变量。
 
 ## 限制
 
-AgentKernel V0.8 alpha 尚不包含：
+AgentKernel V0.9 alpha 尚不包含：
 
-- V0.9 Persistent Memory。
+- 通用 RAG framework。
+- embedding service 或 vector database。
+- 自动判断“什么值得记住”的复杂 memory policy。
+- secure physical deletion。
 - Namespace security。
 - 完整 revocation semantics。
 - RBAC 或 IAM。
@@ -359,7 +395,5 @@ API provider、网络服务、统计重复运行分析或生产 workload trace�
 ## Roadmap
 
 - V0.8：Multi-Agent Runtime alpha release freeze。
-- V0.9：Persistent Memory Runtime architecture。
+- V0.9：Persistent Memory alpha implementation。
 - V1.0：Stable Agent Runtime Kernel baseline。
-
-V0.9 尚未在本 release 中实现。

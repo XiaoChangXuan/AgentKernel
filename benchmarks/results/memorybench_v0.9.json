@@ -1,0 +1,155 @@
+{
+  "cases": [
+    {
+      "case_id": "M1",
+      "evidence": {
+        "memory_id": "mem_0000",
+        "retrieved_ids": [
+          "mem_0000"
+        ]
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "JsonlMemoryStore",
+        "MemoryService.search"
+      ],
+      "name": "Cross-session persistence",
+      "oracle": "Session B fresh runtime retrieves memory written in Session A.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M2",
+      "evidence": {
+        "note": null,
+        "source": "session",
+        "source_agent_id": "agent-a",
+        "source_event_id": "event-7",
+        "source_session_id": "session-1",
+        "source_tool_name": null
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "MemoryRecord.provenance",
+        "JsonlMemoryStore"
+      ],
+      "name": "Provenance",
+      "oracle": "Source session and source event survive restart.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M3",
+      "evidence": {
+        "active_result_ids": [
+          "mem_0001"
+        ],
+        "new_memory_id": "mem_0001",
+        "old_active": false,
+        "old_memory_id": "mem_0000",
+        "old_superseded_by": "mem_0001"
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "memory/remembered",
+        "memory/superseded",
+        "active projection"
+      ],
+      "name": "Supersede",
+      "oracle": "Old record remains durable but active search returns only the superseding record.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M4",
+      "evidence": {
+        "active_result_count": 0,
+        "durable_event_count": 2,
+        "forgotten_at_present": true,
+        "inactive_active_flag": false
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "memory/forgotten",
+        "active projection"
+      ],
+      "name": "Forget",
+      "oracle": "Forgotten memory is not active after restart while durable history remains explainable.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M5",
+      "evidence": {
+        "known_memory_id": "mem_0000",
+        "unauthorized_read_denied": true
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "CapabilityEvaluator",
+        "memory.read"
+      ],
+      "name": "Capability isolation",
+      "oracle": "Agent B knowing memory_id is not enough to read Agent A memory.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M6",
+      "evidence": {
+        "delegated_memory_id": "mem_0000",
+        "delegation_allowed": true,
+        "delegation_id": "delegation_a8f34d39da64c1087a9c094e1c49ff6c"
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "CapabilityDelegator",
+        "CapabilityEvaluator",
+        "memory.read"
+      ],
+      "name": "Delegated read",
+      "oracle": "Existing delegation can derive a narrowed memory.read grant for Agent B.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M7",
+      "evidence": {
+        "durable_memory_count": 1000,
+        "projected_page_count": 5,
+        "search_limit": 5,
+        "selected_count": 5
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "MemoryService.search",
+        "ContextPage projection"
+      ],
+      "name": "Context boundedness",
+      "oracle": "1000 durable memories produce only bounded selected ContextPages.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "M8",
+      "evidence": {
+        "memory_id": "mem_0000",
+        "result_ids": [
+          "mem_0000"
+        ]
+      },
+      "limitations": [],
+      "mechanism_under_test": [
+        "durable events",
+        "rebuildable lexical index"
+      ],
+      "name": "Index rebuild",
+      "oracle": "Dropping and rebuilding the lexical index does not lose durable MemoryRecord facts.",
+      "status": "PASS"
+    }
+  ],
+  "commit": "a5c220d",
+  "decision": "PASS",
+  "deterministic": true,
+  "failed": 0,
+  "network": "not_used",
+  "offline": true,
+  "passed": 8,
+  "runtime_version": "AgentKernel V0.9",
+  "timestamp": "2026-08-28T05:18:52.193974+00:00",
+  "total": 8,
+  "version": "0.9"
+}

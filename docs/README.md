@@ -10,10 +10,11 @@ necessarily current authoritative specifications.
 2. [中文入门指南](getting-started/AGENTKERNEL_GUIDE.zh-CN.md)
 3. [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md)
 4. [Current Architecture](ARCHITECTURE.md)
-5. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
-6. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
-7. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
-8. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
+5. [V0.9 Persistent Memory](memory/V0.9_PERSISTENT_MEMORY.md)
+6. [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
+7. [V0.8 Release Review](releases/V0.8_RELEASE_REVIEW.md)
+8. [V0.8 Release Notes](releases/V0.8_RELEASE_NOTES.md)
+9. [Evaluation Strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md)
 
 ## Quick Tutorials
 
@@ -41,12 +42,16 @@ calls.
   newcomer guide for AgentKernel V0.8.
 - [English newcomer guide](getting-started/AGENTKERNEL_GUIDE.en.md):
   English version of the same onboarding path.
-- [Current architecture](ARCHITECTURE.md): implemented V0.8 runtime architecture.
+- [Current architecture](ARCHITECTURE.md): implemented V0.9 runtime architecture.
+- [V0.9 Persistent Memory](memory/V0.9_PERSISTENT_MEMORY.md):
+  cross-session memory semantics, lifecycle, capability checks, and MemoryBench.
 - [V0.8 release review](releases/V0.8_RELEASE_REVIEW.md): release freeze audit,
   claim boundary, evidence provenance, and validation record.
 - [V0.8 release notes](releases/V0.8_RELEASE_NOTES.md): alpha release summary.
 - [V0.8 Multi-Agent RuntimeBench](evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md):
   B1-B8 evidence, B8 M1-M10 evidence, and limitations.
+- [V0.9 MemoryBench](../benchmarks/results/memorybench_v0.9.json):
+  M1-M8 persistent memory evidence artifact.
 - [Current evaluation strategy](evaluation/AGENTKERNEL_EVALUATION_STRATEGY.md):
   evaluated claims and claim discipline.
 
@@ -135,6 +140,12 @@ Historical V0.7 result:
 
 ```text
 ../benchmarks/results/runtimebench_v0.7.json
+```
+
+V0.9 MemoryBench result:
+
+```text
+../benchmarks/results/memorybench_v0.9.json
 ```
 
 Leaf and historical result files remain under:

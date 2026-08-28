@@ -1,7 +1,7 @@
-# AgentKernel V0.8 Architecture
+# AgentKernel V0.9 Architecture
 
-This document describes the current implemented architecture at the V0.8 alpha
-release candidate. Historical architecture notes remain under
+This document describes the current implemented architecture at the V0.9 alpha
+baseline. Historical architecture notes remain under
 `docs/architecture/`, `docs/implementation/`, and `docs/research/`.
 
 ## Boundary
@@ -29,7 +29,7 @@ authorization, lifecycle validation, durable truth, recovery classification,
 resource access checks, IPC delivery state, and durable side-effect boundaries.
 
 Host policy remains outside the Kernel. Prompt strategy, model choice, business
-workflow, human approval, retry policy, restart policy, memory strategy, and
+workflow, human approval, retry policy, restart policy, memory policy, and
 product UI are policy-layer concerns.
 
 ## Object Model
@@ -43,6 +43,7 @@ Resource   = durable bytes/metadata behind a Kernel handle
 IPC        = Kernel-owned local communication mechanism
 Scheduler  = cooperative Process mechanism
 Accounting = runtime observation and budget input
+Memory     = durable cross-session semantic state with provenance
 ```
 
 Important separations:
@@ -55,6 +56,8 @@ Important separations:
 - ResourceStore is storage, not authorization.
 - IPC payload is data, not authority.
 - Runtime accounting is not a durable billing ledger.
+- Memory is not Session, Context, ResourceStore, or objective truth.
+- Memory ID is not permission.
 
 ## Runtime Stack
 
@@ -68,6 +71,7 @@ Important separations:
 | V0.6 | Structured Capability core and Tool/Resource/Durable enforcement. |
 | V0.7 | Process runtime, cooperative Scheduler, and resource accounting. |
 | V0.8 | Agent Registry, Process Tree, Capability Delegation, Kernel IPC, Resource Sharing, runtime isolation, integrated multi-agent recovery, and Multi-Agent RuntimeBench. |
+| V0.9 | Persistent Memory with provenance, explicit lifecycle, capability enforcement, lexical retrieval, and bounded Context projection. |
 
 ## Core Modules
 
@@ -91,6 +95,7 @@ Important separations:
 | `loop.py` | Default Agent loop orchestration and optional scheduler/accounting safe-point integration. |
 | `llm.py` | Provider-neutral `LLMService` and deterministic `ScriptedLLM`. |
 | `providers/openai_compatible.py` | Optional OpenAI-compatible Chat Completions adapter with explicit endpoint configuration only. |
+| `memory/` | Persistent Memory model, append-only stores, capability-enforced service, deterministic lexical retrieval, and bounded Context projection. |
 
 ## Durable vs Runtime-Only State
 
@@ -104,6 +109,7 @@ Important separations:
 | Resource metadata and ownership. | Python object identity. |
 | ResourceShare facts. | Current in-memory queue structures. |
 | Durable Tool WAL facts. | Live admission state after restart. |
+| Memory events and provenance. | Rebuildable memory search index. |
 
 Recovery uses:
 
@@ -267,21 +273,37 @@ M10 horizons 100, 500, 1000 = PASS
 RuntimeBench is deterministic, offline, local, and synthetic. It measures
 runtime invariants, not model intelligence or production readiness.
 
+V0.9 Persistent Memory evidence is separate from frozen V0.8 RuntimeBench:
+
+```text
+benchmarks/results/memorybench_v0.9.json
+```
+
+Summary:
+
+```text
+M1-M8 = 8/8 PASS
+```
+
 ## Public API Surface
 
 The package exports current runtime primitives from `agentkernel/__init__.py`,
 including Agent Registry, Process Manager/Scheduler, Capability and Delegation
 objects, Kernel IPC, Resource Sharing, Durable Tool, Context VM, and integrated
-multi-agent recovery entrypoints.
+multi-agent recovery entrypoints. V0.9 also exports Persistent Memory model,
+store, service, and Context projection helpers.
 
-The V0.8 release audit found no duplicated `__all__` entries and no obvious
-test-only internals exported as public release surface.
+The V0.9 surface preserves the V0.8 runtime exports and adds memory primitives
+without absorbing Session, Context, Resource, or Capability abstractions.
 
 ## Deliberately Deferred
 
-V0.8 does not implement:
+V0.9 does not implement:
 
-- V0.9 Persistent Memory.
+- General RAG framework.
+- Embedding service or vector database.
+- Automatic memory extraction/reflection policy.
+- Secure physical deletion.
 - Namespace security.
 - Complete revocation semantics.
 - RBAC or IAM.
