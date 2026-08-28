@@ -29,6 +29,9 @@ AgentKernel 现在有三层验证：
 jupyter lab labs
 ```
 
+V0.1-V0.3 notebook 会自动把 AgentKernel 仓库根目录加入 Python import path，
+所以从仓库根目录或 `labs/` 目录打开都可以导入 `from labs import create_lab`。
+
 如果只想在命令行看一个 lab：
 
 ```powershell
