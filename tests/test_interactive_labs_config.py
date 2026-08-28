@@ -128,6 +128,35 @@ def test_real_model_lab_env_overrides_project_config(tmp_path, monkeypatch):
     assert config.source == "env:AGENTKERNEL_LAB_LLM_*"
 
 
+def test_partial_lab_env_falls_back_to_project_config(tmp_path, monkeypatch):
+    _clear_model_env(monkeypatch)
+    (tmp_path / "agentkernel").mkdir()
+    (tmp_path / "labs").mkdir()
+    _write_project_config(
+        tmp_path,
+        {
+            "model": "openai-compatible",
+            "allow_network": True,
+            "openai_compatible": {
+                "base_url": "https://project-provider.example/v1",
+                "model": "project-model",
+                "api_key": "<test-project-token>",
+            },
+        },
+    )
+    monkeypatch.setenv("AGENTKERNEL_LAB_LLM_API_KEY", "<partial-lab-token>")
+    monkeypatch.chdir(tmp_path)
+
+    config = _load_lab_llm_config()
+
+    assert config.base_url == "https://project-provider.example/v1"
+    assert config.model == "project-model"
+    assert config.api_key == "<test-project-token>"
+    assert config.source.endswith(".minicode\\config.json") or config.source.endswith(
+        ".minicode/config.json"
+    )
+
+
 def test_v03_real_model_invalid_patch_is_observable(monkeypatch):
     class FakeLabLLM:
         @property

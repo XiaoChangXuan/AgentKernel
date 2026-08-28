@@ -367,12 +367,7 @@ def _load_lab_llm_config() -> LabLLMConfig:
     lab_base_url = _env_value(LAB_LLM_BASE_URL_ENV, env_file_values)
     lab_model = _env_value(LAB_LLM_MODEL_ENV, env_file_values)
     lab_api_key = _env_value(LAB_LLM_API_KEY_ENV, env_file_values)
-    if lab_base_url or lab_model:
-        if not lab_base_url or not lab_model:
-            raise RuntimeError(
-                "real_model mode with AGENTKERNEL_LAB_LLM_* requires both "
-                f"{LAB_LLM_BASE_URL_ENV} and {LAB_LLM_MODEL_ENV}"
-            )
+    if lab_base_url and lab_model:
         return LabLLMConfig(
             base_url=lab_base_url,
             model=lab_model,
