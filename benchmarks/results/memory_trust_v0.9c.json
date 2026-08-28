@@ -1,0 +1,235 @@
+{
+  "cases": [
+    {
+      "case_id": "T1",
+      "evidence": {
+        "normal_result_count": 0,
+        "proposal_id": "mpr_0000"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "MemoryService.propose",
+        "MemoryService.search"
+      ],
+      "name": "Proposal Boundary",
+      "oracle": "A proposal is durable audit state, not a MemoryRecord retrieval candidate.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T2",
+      "evidence": {
+        "memory_id": "mem_0000",
+        "proposal_id": "mpr_0000"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "MemoryService.admit",
+        "memory/admission",
+        "memory/remembered"
+      ],
+      "name": "Explicit Admission",
+      "oracle": "Only an explicit ADMIT decision creates an active retrievable MemoryRecord.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T3",
+      "evidence": {
+        "admission_denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "CapabilityEvaluator",
+        "memory.propose",
+        "memory.admit"
+      ],
+      "name": "Admission Capability",
+      "oracle": "memory.propose does not imply memory.admit.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T4",
+      "evidence": {
+        "has_untrusted_origin": true,
+        "normal_result_count": 0,
+        "proposal_state": "QUARANTINED"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/proposed",
+        "memory/admission",
+        "default retrieval"
+      ],
+      "name": "Poisoning Quarantine",
+      "oracle": "Tool-derived poisoning remains auditable but hidden from normal retrieval.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T5",
+      "evidence": {
+        "decision": "REJECT",
+        "proposal_state": "REJECTED"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/admission",
+        "proposal audit"
+      ],
+      "name": "Rejection Audit",
+      "oracle": "Rejected proposals remain auditable and never enter normal retrieval.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T6",
+      "evidence": {
+        "note": "README contained untrusted instructions.",
+        "source": "read_file",
+        "source_agent_id": "agent-a",
+        "source_class": "TOOL_DERIVED",
+        "source_event_id": "event-readme-tool-result",
+        "source_resource": "README.md",
+        "source_session_id": "session-a",
+        "source_tool_call_id": "tool-call-readme",
+        "source_tool_name": "read_file"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "MemoryProposal.provenance",
+        "JsonlMemoryStore"
+      ],
+      "name": "Provenance Preservation",
+      "oracle": "Tool result lineage survives restart on the proposal audit object.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T7",
+      "evidence": {
+        "source": "read_file",
+        "source_class": "TOOL_DERIVED",
+        "tainted": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "MemoryProposal.provenance"
+      ],
+      "name": "Provenance Laundering Defense",
+      "oracle": "Model paraphrase does not erase source evidence supplied at proposal time.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T8",
+      "evidence": {
+        "confirmation_source_class": "USER_EXPLICIT",
+        "decisions": [
+          "QUARANTINE",
+          "ADMIT"
+        ],
+        "record_provenance_source_class": "TOOL_DERIVED"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/admission audit chain"
+      ],
+      "name": "Confirmed Admission",
+      "oracle": "A later user confirmation can admit the proposal without erasing original evidence.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T9",
+      "evidence": {
+        "admit_denied": true,
+        "read_denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "CapabilityEvaluator",
+        "MemoryRecord content"
+      ],
+      "name": "Memory Is Not Authority",
+      "oracle": "Memory content cannot mint Kernel capabilities.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T10",
+      "evidence": {
+        "audit_context_pages": 400,
+        "default_context_pages": 100,
+        "history_records": 100
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "Context projection",
+        "proposal audit projection"
+      ],
+      "name": "Context Exclusion",
+      "oracle": "Default Context contains active admitted memory only; proposals require explicit audit projection.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T11",
+      "evidence": {
+        "mpr_0000": "ADMITTED",
+        "mpr_0001": "PROPOSED",
+        "mpr_0002": "QUARANTINED",
+        "mpr_0003": "REJECTED"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "JsonlMemoryStore",
+        "proposal/admission projection"
+      ],
+      "name": "Restart Durability",
+      "oracle": "Proposal and admission states recover in a fresh runtime.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "T12",
+      "evidence": {
+        "admission_state": "ADMITTED",
+        "lifecycle_state": "STALE"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, classifier, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/admission",
+        "memory/stale"
+      ],
+      "name": "Lifecycle Orthogonality",
+      "oracle": "Admission state survives independent V0.9B lifecycle mutation.",
+      "status": "PASS"
+    }
+  ],
+  "commit": "673442b",
+  "decision": "PASS",
+  "deterministic": true,
+  "failed": 0,
+  "network": "not_used",
+  "offline": true,
+  "passed": 12,
+  "runtime_version": "AgentKernel V0.9C",
+  "timestamp": "2026-08-28T06:53:50.921398+00:00",
+  "total": 12,
+  "version": "0.9C"
+}

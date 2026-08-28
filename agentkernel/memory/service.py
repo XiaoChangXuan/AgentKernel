@@ -12,14 +12,20 @@ from dataclasses import replace
 from ..capabilities import AuthorizationRequest, CapabilityEvaluator
 from ..protocol import JsonValue
 from .model import (
+    MEMORY_ADMIT_ACTION,
     MEMORY_FORGET_ACTION,
+    MEMORY_PROPOSE_ACTION,
     MEMORY_READ_ACTION,
     MEMORY_WRITE_ACTION,
+    MemoryAdmissionDecision,
+    MemoryAdmissionRecord,
+    MemoryAdmissionState,
     MemoryAccessDenied,
     MemoryCorruptionError,
     MemoryEvent,
     MemoryInvalid,
     MemoryNotFound,
+    MemoryProposal,
     MemoryProvenance,
     MemoryRecord,
     memory_namespace_scope,
@@ -30,6 +36,8 @@ from .store import InMemoryMemoryStore, MemoryStore
 
 MemoryIdFactory = Callable[[], str]
 MemoryEventIdFactory = Callable[[], str]
+MemoryProposalIdFactory = Callable[[], str]
+MemoryDecisionIdFactory = Callable[[], str]
 
 
 class MemoryService:
@@ -42,12 +50,256 @@ class MemoryService:
         clock: Callable[[], float] = time.time,
         memory_id_factory: MemoryIdFactory | None = None,
         event_id_factory: MemoryEventIdFactory | None = None,
+        proposal_id_factory: MemoryProposalIdFactory | None = None,
+        decision_id_factory: MemoryDecisionIdFactory | None = None,
     ) -> None:
         self._store = store or InMemoryMemoryStore()
         self._clock = clock
         self._memory_id_factory = memory_id_factory or _new_memory_id
         self._event_id_factory = event_id_factory or _new_memory_event_id
+        self._proposal_id_factory = proposal_id_factory or _new_memory_proposal_id
+        self._decision_id_factory = decision_id_factory or _new_memory_decision_id
         self._index: dict[str, set[str]] | None = None
+
+    def propose(
+        self,
+        *,
+        agent_id: str,
+        namespace: str,
+        content: str,
+        provenance: MemoryProvenance,
+        owner_agent_id: str | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        proposal_id: str | None = None,
+        has_untrusted_origin: bool | None = None,
+    ) -> MemoryProposal:
+        """Persist a memory proposal without admitting it as active memory."""
+
+        owner = owner_agent_id or agent_id
+        resource = memory_namespace_scope(owner, namespace)
+        self._authorize(agent_id, MEMORY_PROPOSE_ACTION, resource, capability_evaluator)
+        proposal = MemoryProposal(
+            proposal_id=proposal_id or self._proposal_id_factory(),
+            proposer_agent_id=agent_id,
+            owner_agent_id=owner,
+            namespace=namespace,
+            content=content,
+            provenance=provenance,
+            created_at=self._clock(),
+            metadata={} if metadata is None else copy.deepcopy(dict(metadata)),
+            has_untrusted_origin=(
+                _has_untrusted_origin(provenance)
+                if has_untrusted_origin is None
+                else has_untrusted_origin
+            ),
+        )
+        if proposal.proposal_id in self._project_proposals_by_id():
+            raise MemoryCorruptionError(f"memory proposal already exists: {proposal.proposal_id}")
+        self._store.append(
+            self._event_for_identity(
+                "memory/proposed",
+                agent_id=agent_id,
+                memory_id=proposal.proposal_id,
+                owner_agent_id=owner,
+                namespace=namespace,
+                data={"proposal": proposal.as_dict()},
+            )
+        )
+        self._store.flush()
+        return proposal
+
+    def read_proposal(
+        self,
+        proposal_id: str,
+        *,
+        agent_id: str,
+        capability_evaluator: CapabilityEvaluator | None = None,
+    ) -> MemoryProposal:
+        """Read one proposal for audit/debug after memory.read authorization."""
+
+        proposal = self._resolve_proposal(proposal_id)
+        self._authorize(
+            agent_id,
+            MEMORY_READ_ACTION,
+            memory_namespace_scope(proposal.owner_agent_id, proposal.namespace),
+            capability_evaluator,
+        )
+        return _clone_proposal(proposal)
+
+    def list_proposals(
+        self,
+        *,
+        agent_id: str,
+        owner_agent_id: str,
+        namespace: str | None = None,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        include_states: Iterable[MemoryAdmissionState] | None = None,
+    ) -> tuple[MemoryProposal, ...]:
+        """List durable proposals for explicit audit/debug views."""
+
+        scope = (
+            f"memory://{owner_agent_id}/**"
+            if namespace is None
+            else memory_namespace_scope(owner_agent_id, namespace)
+        )
+        self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
+        states = None if include_states is None else set(include_states)
+        proposals = [
+            proposal
+            for proposal in self._project_proposals_by_id().values()
+            if proposal.owner_agent_id == owner_agent_id
+            and (namespace is None or proposal.namespace == namespace)
+            and (states is None or proposal.admission_state in states)
+        ]
+        proposals.sort(key=lambda item: (item.created_at, item.proposal_id))
+        return tuple(_clone_proposal(proposal) for proposal in proposals)
+
+    def admission_history(
+        self,
+        proposal_id: str | None = None,
+        *,
+        agent_id: str,
+        owner_agent_id: str,
+        namespace: str | None = None,
+        capability_evaluator: CapabilityEvaluator | None = None,
+    ) -> tuple[MemoryAdmissionRecord, ...]:
+        """Return durable admission decisions after memory.read authorization."""
+
+        scope = (
+            f"memory://{owner_agent_id}/**"
+            if namespace is None
+            else memory_namespace_scope(owner_agent_id, namespace)
+        )
+        self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
+        proposal_ids = {
+            proposal.proposal_id
+            for proposal in self._project_proposals_by_id().values()
+            if proposal.owner_agent_id == owner_agent_id
+            and (namespace is None or proposal.namespace == namespace)
+        }
+        records = [
+            record
+            for record in self._project_admission_records()
+            if record.proposal_id in proposal_ids
+            and (proposal_id is None or record.proposal_id == proposal_id)
+        ]
+        records.sort(key=lambda item: (item.decided_at, item.decision_id))
+        return tuple(_clone_admission(record) for record in records)
+
+    def admit(
+        self,
+        proposal_id: str,
+        *,
+        agent_id: str,
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
+        memory_id: str | None = None,
+    ) -> MemoryRecord:
+        """Admit an existing proposal as active memory with durable audit."""
+
+        proposal = self._resolve_proposal(proposal_id)
+        if proposal.admission_state == "ADMITTED":
+            raise MemoryInvalid("proposal is already admitted")
+        if proposal.admission_state == "REJECTED":
+            raise MemoryInvalid("rejected proposal cannot be admitted")
+        self._authorize(
+            agent_id,
+            MEMORY_ADMIT_ACTION,
+            memory_namespace_scope(proposal.owner_agent_id, proposal.namespace),
+            capability_evaluator,
+        )
+        record = MemoryRecord(
+            memory_id=memory_id or self._memory_id_factory(),
+            owner_agent_id=proposal.owner_agent_id,
+            namespace=proposal.namespace,
+            content=proposal.content,
+            created_at=self._clock(),
+            provenance=proposal.provenance,
+            metadata={
+                **copy.deepcopy(dict(proposal.metadata)),
+                **({} if metadata is None else copy.deepcopy(dict(metadata))),
+                "admitted_from_proposal_id": proposal.proposal_id,
+            },
+        )
+        if record.memory_id in self._project_by_id(include_inactive=True):
+            raise MemoryCorruptionError(f"memory already exists: {record.memory_id}")
+        decision = self._admission_record(
+            proposal=proposal,
+            decision="ADMIT",
+            agent_id=agent_id,
+            reason=reason,
+            evidence_provenance=evidence_provenance,
+            resulting_memory_id=record.memory_id,
+            metadata=metadata,
+        )
+        self._store.append(
+            self._event_for_identity(
+                "memory/admission",
+                agent_id=agent_id,
+                memory_id=proposal.proposal_id,
+                owner_agent_id=proposal.owner_agent_id,
+                namespace=proposal.namespace,
+                data={"admission": decision.as_dict()},
+            )
+        )
+        self._store.append(
+            self._event(
+                "memory/remembered",
+                agent_id=agent_id,
+                record=record,
+                data={"record": record.as_dict()},
+            )
+        )
+        self._store.flush()
+        self._index = None
+        return record
+
+    def quarantine(
+        self,
+        proposal_id: str,
+        *,
+        agent_id: str,
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
+    ) -> MemoryProposal:
+        """Keep a proposal durable for audit while excluding it from retrieval."""
+
+        return self._decide_without_memory(
+            proposal_id,
+            agent_id=agent_id,
+            decision="QUARANTINE",
+            reason=reason,
+            evidence_provenance=evidence_provenance,
+            capability_evaluator=capability_evaluator,
+            metadata=metadata,
+        )
+
+    def reject(
+        self,
+        proposal_id: str,
+        *,
+        agent_id: str,
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
+    ) -> MemoryProposal:
+        """Reject a proposal durably without creating active memory."""
+
+        return self._decide_without_memory(
+            proposal_id,
+            agent_id=agent_id,
+            decision="REJECT",
+            reason=reason,
+            evidence_provenance=evidence_provenance,
+            capability_evaluator=capability_evaluator,
+            metadata=metadata,
+        )
 
     def remember(
         self,
@@ -441,6 +693,27 @@ class MemoryService:
             data=copy.deepcopy(dict(data)),
         )
 
+    def _event_for_identity(
+        self,
+        event_type: str,
+        *,
+        agent_id: str,
+        memory_id: str,
+        owner_agent_id: str,
+        namespace: str,
+        data: Mapping[str, JsonValue],
+    ) -> MemoryEvent:
+        return MemoryEvent(
+            event_id=self._event_id_factory(),
+            event_type=event_type,  # type: ignore[arg-type]
+            agent_id=agent_id,
+            memory_id=memory_id,
+            owner_agent_id=owner_agent_id,
+            namespace=namespace,
+            created_at=self._clock(),
+            data=copy.deepcopy(dict(data)),
+        )
+
     def _project_by_id(self, *, include_inactive: bool) -> dict[str, MemoryRecord]:
         records = _project_records(self._store.list_events())
         if include_inactive:
@@ -451,10 +724,91 @@ class MemoryService:
         if self._index is None:
             self.rebuild_index()
 
+    def _admission_record(
+        self,
+        *,
+        proposal: MemoryProposal,
+        decision: MemoryAdmissionDecision,
+        agent_id: str,
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        resulting_memory_id: str | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
+    ) -> MemoryAdmissionRecord:
+        return MemoryAdmissionRecord(
+            decision_id=self._decision_id_factory(),
+            proposal_id=proposal.proposal_id,
+            decision=decision,
+            decided_by_agent_id=agent_id,
+            reason=reason,
+            evidence_provenance=evidence_provenance,
+            decided_at=self._clock(),
+            resulting_memory_id=resulting_memory_id,
+            metadata={} if metadata is None else copy.deepcopy(dict(metadata)),
+        )
+
+    def _decide_without_memory(
+        self,
+        proposal_id: str,
+        *,
+        agent_id: str,
+        decision: MemoryAdmissionDecision,
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        capability_evaluator: CapabilityEvaluator | None,
+        metadata: Mapping[str, JsonValue] | None,
+    ) -> MemoryProposal:
+        proposal = self._resolve_proposal(proposal_id)
+        if proposal.admission_state == "ADMITTED":
+            raise MemoryInvalid("admitted proposal cannot be changed without lifecycle APIs")
+        if proposal.admission_state == "REJECTED":
+            raise MemoryInvalid("rejected proposal is terminal")
+        self._authorize(
+            agent_id,
+            MEMORY_ADMIT_ACTION,
+            memory_namespace_scope(proposal.owner_agent_id, proposal.namespace),
+            capability_evaluator,
+        )
+        record = self._admission_record(
+            proposal=proposal,
+            decision=decision,
+            agent_id=agent_id,
+            reason=reason,
+            evidence_provenance=evidence_provenance,
+            metadata=metadata,
+        )
+        self._store.append(
+            self._event_for_identity(
+                "memory/admission",
+                agent_id=agent_id,
+                memory_id=proposal.proposal_id,
+                owner_agent_id=proposal.owner_agent_id,
+                namespace=proposal.namespace,
+                data={"admission": record.as_dict()},
+            )
+        )
+        self._store.flush()
+        return _clone_proposal(self._resolve_proposal(proposal.proposal_id))
+
+    def _resolve_proposal(self, proposal_id: str) -> MemoryProposal:
+        proposals = self._project_proposals_by_id()
+        proposal = proposals.get(proposal_id)
+        if proposal is None:
+            raise MemoryNotFound(f"memory proposal not found: {proposal_id}")
+        return proposal
+
+    def _project_proposals_by_id(self) -> dict[str, MemoryProposal]:
+        return _project_proposals(self._store.list_events())
+
+    def _project_admission_records(self) -> tuple[MemoryAdmissionRecord, ...]:
+        return _project_admissions(self._store.list_events())
+
 
 def _project_records(events: Iterable[MemoryEvent]) -> dict[str, MemoryRecord]:
     records: dict[str, MemoryRecord] = {}
     for event in events:
+        if event.event_type in {"memory/proposed", "memory/admission"}:
+            continue
         if event.event_type == "memory/remembered":
             raw = event.data.get("record")
             if not isinstance(raw, Mapping):
@@ -577,6 +931,81 @@ def _project_records(events: Iterable[MemoryEvent]) -> dict[str, MemoryRecord]:
     return records
 
 
+def _project_proposals(events: Iterable[MemoryEvent]) -> dict[str, MemoryProposal]:
+    proposals: dict[str, MemoryProposal] = {}
+    for event in events:
+        if event.event_type == "memory/proposed":
+            raw = event.data.get("proposal")
+            if not isinstance(raw, Mapping):
+                raise MemoryCorruptionError("proposal event lacks proposal")
+            proposal = MemoryProposal.from_dict(raw)
+            if proposal.proposal_id in proposals:
+                raise MemoryCorruptionError(f"duplicate memory proposal id: {proposal.proposal_id}")
+            if (
+                proposal.proposal_id != event.memory_id
+                or proposal.owner_agent_id != event.owner_agent_id
+                or proposal.namespace != event.namespace
+            ):
+                raise MemoryCorruptionError("proposal event identity mismatch")
+            proposals[proposal.proposal_id] = proposal
+            continue
+        if event.event_type == "memory/admission":
+            raw = event.data.get("admission")
+            if not isinstance(raw, Mapping):
+                raise MemoryCorruptionError("admission event lacks admission")
+            admission = MemoryAdmissionRecord.from_dict(raw)
+            proposal = proposals.get(admission.proposal_id)
+            if proposal is None:
+                raise MemoryCorruptionError("admission event references missing proposal")
+            if proposal.admission_state == "ADMITTED":
+                raise MemoryCorruptionError("admitted proposal cannot receive another decision")
+            if proposal.admission_state == "REJECTED":
+                raise MemoryCorruptionError("rejected proposal cannot receive another decision")
+            if admission.decision == "ADMIT":
+                if admission.resulting_memory_id is None:
+                    raise MemoryCorruptionError("ADMIT decision lacks resulting memory id")
+                proposals[proposal.proposal_id] = replace(
+                    proposal,
+                    admission_state="ADMITTED",
+                    admitted_memory_id=admission.resulting_memory_id,
+                    latest_decision_id=admission.decision_id,
+                )
+                continue
+            if admission.decision == "QUARANTINE":
+                proposals[proposal.proposal_id] = replace(
+                    proposal,
+                    admission_state="QUARANTINED",
+                    latest_decision_id=admission.decision_id,
+                )
+                continue
+            if admission.decision == "REJECT":
+                proposals[proposal.proposal_id] = replace(
+                    proposal,
+                    admission_state="REJECTED",
+                    latest_decision_id=admission.decision_id,
+                )
+                continue
+        continue
+    return proposals
+
+
+def _project_admissions(events: Iterable[MemoryEvent]) -> tuple[MemoryAdmissionRecord, ...]:
+    records: list[MemoryAdmissionRecord] = []
+    seen: set[str] = set()
+    for event in events:
+        if event.event_type != "memory/admission":
+            continue
+        raw = event.data.get("admission")
+        if not isinstance(raw, Mapping):
+            raise MemoryCorruptionError("admission event lacks admission")
+        record = MemoryAdmissionRecord.from_dict(raw)
+        if record.decision_id in seen:
+            raise MemoryCorruptionError(f"duplicate admission decision id: {record.decision_id}")
+        seen.add(record.decision_id)
+        records.append(record)
+    return tuple(records)
+
+
 def _build_index(records: Iterable[MemoryRecord]) -> dict[str, set[str]]:
     index: dict[str, set[str]] = {}
     for record in records:
@@ -623,8 +1052,28 @@ def _new_memory_event_id() -> str:
     return f"mev_{uuid.uuid4().hex}"
 
 
+def _new_memory_proposal_id() -> str:
+    return f"mpr_{uuid.uuid4().hex}"
+
+
+def _new_memory_decision_id() -> str:
+    return f"mad_{uuid.uuid4().hex}"
+
+
 def _clone_record(record: MemoryRecord) -> MemoryRecord:
     return MemoryRecord.from_dict(record.as_dict())
+
+
+def _clone_proposal(proposal: MemoryProposal) -> MemoryProposal:
+    return MemoryProposal.from_dict(proposal.as_dict())
+
+
+def _clone_admission(record: MemoryAdmissionRecord) -> MemoryAdmissionRecord:
+    return MemoryAdmissionRecord.from_dict(record.as_dict())
+
+
+def _has_untrusted_origin(provenance: MemoryProvenance) -> bool:
+    return provenance.source_class in {"TOOL_DERIVED", "EXTERNAL_UNTRUSTED"}
 
 
 def _visible_for_options(

@@ -84,6 +84,7 @@ External World
 | V0.8 | Agent Registry、Process Tree、Capability Delegation、Kernel IPC、Resource Sharing、runtime isolation、integrated multi-agent recovery 与 Multi-Agent RuntimeBench |
 | V0.9 | Persistent Memory：跨 Session、Agent-scoped、带 provenance、Capability-enforced，并通过 Context VM 有界投影 |
 | V0.9B | Memory Correctness：staleness、explicit conflict、supersession、freshness provenance 与 active retrieval filtering |
+| V0.9C | Memory Trust Boundary：memory proposal、durable admission decision、quarantine/rejection、provenance-aware Context filtering |
 
 ## Kernel 不变量
 
@@ -208,6 +209,41 @@ benchmarks/results/memory_correctness_v0.9b.json
 V0.9B treats Memory as remembered knowledge rather than objective truth. Durable
 memory can become stale, conflict relations are explicit and preserved, and
 default retrieval/projection continue to prefer active memories only.
+
+V0.9C 新增 Memory Trust Boundary 评测：
+
+```bash
+python -m benchmarks.memory_trust
+```
+
+机器可读结果：
+
+```text
+benchmarks/results/memory_trust_v0.9c.json
+```
+
+当前 Memory Trust：
+
+| Case | Result |
+| --- | --- |
+| T1 Proposal Boundary | PASS |
+| T2 Explicit Admission | PASS |
+| T3 Admission Capability | PASS |
+| T4 Poisoning Quarantine | PASS |
+| T5 Rejection Audit | PASS |
+| T6 Provenance Preservation | PASS |
+| T7 Provenance Laundering Defense | PASS |
+| T8 Confirmed Admission | PASS |
+| T9 Memory Is Not Authority | PASS |
+| T10 Context Exclusion | PASS |
+| T11 Restart Durability | PASS |
+| T12 Lifecycle Orthogonality | PASS |
+
+V0.9C adds explicit memory proposals, durable admission decisions,
+provenance-aware trust boundary, quarantine/rejection, and poisoning-resistant
+default projection. It does not claim to solve prompt injection or verify truth;
+it prevents untrusted memory proposals from silently becoming active persistent
+memory under the tested runtime contract.
 
 ## 快速运行
 
@@ -359,6 +395,7 @@ docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md
 - [V0.8 RuntimeBench](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
 - [V0.9 Persistent Memory](docs/memory/V0.9_PERSISTENT_MEMORY.md)
 - [V0.9B Memory Correctness](docs/memory/V0.9B_MEMORY_CORRECTNESS.md)
+- [V0.9C Memory Trust Boundary](docs/memory/V0.9C_MEMORY_TRUST.md)
 - [MiniCode Phase 2F Workload Evaluation](docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md)
 
 教程：
@@ -400,6 +437,7 @@ V0.8 alpha 只支持有边界的 runtime-mechanism claim：
 - Multi-agent recovery 能从 durable semantic facts 和当前配置重建运行时机制，不恢复 stale runtime-only authority。
 - Persistent Memory 能在 deterministic offline fixtures 中跨 Session 保留带 provenance 的语义记忆，并保持 capability enforcement、semantic forget、supersede、bounded Context projection 和 rebuildable lexical index 不变量。
 - Memory Correctness 能在 deterministic offline fixtures 中显式保存 staleness、conflict、supersede chain 和 freshness provenance，并保持 default active retrieval/projection filtering。
+- Memory Trust Boundary 能在 deterministic offline fixtures 中阻止 untrusted/model-proposed information 绕过 explicit admission mechanism，防止它静默成为 active persistent memory。
 
 ## 限制
 
@@ -409,6 +447,7 @@ AgentKernel V0.9 alpha 尚不包含：
 - embedding service 或 vector database。
 - 自动判断“什么值得记住”的复杂 memory policy。
 - 自动 truth verification、LLM contradiction judge 或 memory poisoning policy。
+- 自动 prompt-injection detection 或外部内容安全判断。
 - secure physical deletion。
 - Namespace security。
 - 完整 revocation semantics。

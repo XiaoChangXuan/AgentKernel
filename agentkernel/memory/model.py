@@ -13,12 +13,25 @@ from typing import Any, Literal
 from ..protocol import JsonValue, is_json_value
 
 MEMORY_READ_ACTION = "memory.read"
+MEMORY_PROPOSE_ACTION = "memory.propose"
+MEMORY_ADMIT_ACTION = "memory.admit"
 MEMORY_WRITE_ACTION = "memory.write"
 MEMORY_FORGET_ACTION = "memory.forget"
 MEMORY_RESOURCE_SCOPE = "memory://**"
 
 MemoryLifecycleState = Literal["ACTIVE", "SUPERSEDED", "FORGOTTEN", "STALE"]
+MemoryAdmissionState = Literal["PROPOSED", "ADMITTED", "QUARANTINED", "REJECTED"]
+MemoryAdmissionDecision = Literal["ADMIT", "QUARANTINE", "REJECT"]
+MemorySourceClass = Literal[
+    "USER_EXPLICIT",
+    "HOST_VERIFIED",
+    "AGENT_INFERRED",
+    "TOOL_DERIVED",
+    "EXTERNAL_UNTRUSTED",
+]
 MemoryEventType = Literal[
+    "memory/proposed",
+    "memory/admission",
     "memory/remembered",
     "memory/superseded",
     "memory/forgotten",
@@ -54,19 +67,26 @@ class MemoryProvenance:
     """Minimal provenance for one remembered proposition."""
 
     source: str
+    source_class: MemorySourceClass | None = None
     source_session_id: str | None = None
     source_event_id: str | None = None
     source_agent_id: str | None = None
     source_tool_name: str | None = None
+    source_resource: str | None = None
+    source_tool_call_id: str | None = None
     note: str | None = None
 
     def __post_init__(self) -> None:
         _require_identityish(self.source, "provenance source")
+        if self.source_class is not None:
+            _required_source_class(self.source_class)
         for name in (
             "source_session_id",
             "source_event_id",
             "source_agent_id",
             "source_tool_name",
+            "source_resource",
+            "source_tool_call_id",
             "note",
         ):
             value = getattr(self, name)
@@ -74,7 +94,7 @@ class MemoryProvenance:
                 raise ValueError(f"{name} must be None or a non-empty string")
 
     def as_dict(self) -> dict[str, JsonValue]:
-        return {
+        value: dict[str, JsonValue] = {
             "source": self.source,
             "source_session_id": self.source_session_id,
             "source_event_id": self.source_event_id,
@@ -82,10 +102,15 @@ class MemoryProvenance:
             "source_tool_name": self.source_tool_name,
             "note": self.note,
         }
+        for key in ("source_class", "source_resource", "source_tool_call_id"):
+            field_value = getattr(self, key)
+            if field_value is not None:
+                value[key] = field_value
+        return value
 
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "MemoryProvenance":
-        expected = {
+        required = {
             "source",
             "source_session_id",
             "source_event_id",
@@ -93,15 +118,217 @@ class MemoryProvenance:
             "source_tool_name",
             "note",
         }
-        if set(value) != expected:
+        optional = {
+            "source_class",
+            "source_resource",
+            "source_tool_call_id",
+        }
+        fields = set(value)
+        if not required.issubset(fields) or fields - required - optional:
             raise ValueError("memory provenance has unexpected fields")
         return cls(
             source=_required_string(value, "source"),
+            source_class=_optional_source_class(value.get("source_class")),
             source_session_id=_optional_string(value, "source_session_id"),
             source_event_id=_optional_string(value, "source_event_id"),
             source_agent_id=_optional_string(value, "source_agent_id"),
             source_tool_name=_optional_string(value, "source_tool_name"),
+            source_resource=_optional_string(value, "source_resource"),
+            source_tool_call_id=_optional_string(value, "source_tool_call_id"),
             note=_optional_string(value, "note"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryProposal:
+    """Model- or host-proposed memory that has not crossed admission yet."""
+
+    proposal_id: str
+    proposer_agent_id: str
+    owner_agent_id: str
+    namespace: str
+    content: str
+    provenance: MemoryProvenance
+    created_at: float
+    metadata: Mapping[str, JsonValue] = field(default_factory=dict)
+    admission_state: MemoryAdmissionState = "PROPOSED"
+    admitted_memory_id: str | None = None
+    latest_decision_id: str | None = None
+    has_untrusted_origin: bool = False
+
+    def __post_init__(self) -> None:
+        _require_identityish(self.proposal_id, "proposal_id")
+        _require_identityish(self.proposer_agent_id, "proposer_agent_id")
+        _require_identityish(self.owner_agent_id, "owner_agent_id")
+        _require_identityish(self.namespace, "namespace")
+        if not isinstance(self.content, str) or not self.content:
+            raise ValueError("proposal content must be non-empty text")
+        if not isinstance(self.created_at, (int, float)) or isinstance(
+            self.created_at, bool
+        ):
+            raise TypeError("created_at must be a finite number")
+        if not math.isfinite(float(self.created_at)):
+            raise ValueError("created_at must be finite")
+        object.__setattr__(self, "created_at", float(self.created_at))
+        metadata = copy.deepcopy(dict(self.metadata))
+        if not is_json_value(metadata):
+            raise TypeError("proposal metadata must be lossless JSON")
+        object.__setattr__(self, "metadata", MappingProxyType(metadata))
+        if self.admission_state not in {
+            "PROPOSED",
+            "ADMITTED",
+            "QUARANTINED",
+            "REJECTED",
+        }:
+            raise ValueError("unsupported memory admission_state")
+        if self.admitted_memory_id is not None:
+            _require_identityish(self.admitted_memory_id, "admitted_memory_id")
+        if self.latest_decision_id is not None:
+            _require_identityish(self.latest_decision_id, "latest_decision_id")
+        if not isinstance(self.has_untrusted_origin, bool):
+            raise TypeError("has_untrusted_origin must be a boolean")
+        if self.admission_state == "ADMITTED" and self.admitted_memory_id is None:
+            raise ValueError("ADMITTED proposal requires admitted_memory_id")
+
+    @property
+    def status(self) -> MemoryAdmissionState:
+        return self.admission_state
+
+    def as_dict(self) -> dict[str, JsonValue]:
+        return {
+            "proposal_id": self.proposal_id,
+            "proposer_agent_id": self.proposer_agent_id,
+            "owner_agent_id": self.owner_agent_id,
+            "namespace": self.namespace,
+            "content": self.content,
+            "provenance": self.provenance.as_dict(),
+            "created_at": self.created_at,
+            "metadata": copy.deepcopy(dict(self.metadata)),
+            "admission_state": self.admission_state,
+            "admitted_memory_id": self.admitted_memory_id,
+            "latest_decision_id": self.latest_decision_id,
+            "has_untrusted_origin": self.has_untrusted_origin,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "MemoryProposal":
+        expected = {
+            "proposal_id",
+            "proposer_agent_id",
+            "owner_agent_id",
+            "namespace",
+            "content",
+            "provenance",
+            "created_at",
+            "metadata",
+            "admission_state",
+            "admitted_memory_id",
+            "latest_decision_id",
+            "has_untrusted_origin",
+        }
+        if set(value) != expected:
+            raise ValueError("memory proposal has unexpected fields")
+        provenance = value["provenance"]
+        if not isinstance(provenance, Mapping):
+            raise TypeError("proposal provenance must be an object")
+        metadata = value["metadata"]
+        if not isinstance(metadata, Mapping):
+            raise TypeError("proposal metadata must be an object")
+        return cls(
+            proposal_id=_required_string(value, "proposal_id"),
+            proposer_agent_id=_required_string(value, "proposer_agent_id"),
+            owner_agent_id=_required_string(value, "owner_agent_id"),
+            namespace=_required_string(value, "namespace"),
+            content=_required_string(value, "content"),
+            provenance=MemoryProvenance.from_dict(provenance),
+            created_at=_finite_number(value, "created_at"),
+            metadata=copy.deepcopy(dict(metadata)),
+            admission_state=_required_admission_state(value.get("admission_state")),
+            admitted_memory_id=_optional_string(value, "admitted_memory_id"),
+            latest_decision_id=_optional_string(value, "latest_decision_id"),
+            has_untrusted_origin=_required_bool(value, "has_untrusted_origin"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryAdmissionRecord:
+    """Durable audit record for one proposal admission decision."""
+
+    decision_id: str
+    proposal_id: str
+    decision: MemoryAdmissionDecision
+    decided_by_agent_id: str
+    reason: str
+    evidence_provenance: MemoryProvenance
+    decided_at: float
+    resulting_memory_id: str | None = None
+    metadata: Mapping[str, JsonValue] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _require_identityish(self.decision_id, "decision_id")
+        _require_identityish(self.proposal_id, "proposal_id")
+        _required_admission_decision(self.decision)
+        _require_identityish(self.decided_by_agent_id, "decided_by_agent_id")
+        if not isinstance(self.reason, str) or not self.reason:
+            raise ValueError("admission reason must be non-empty text")
+        if not isinstance(self.decided_at, (int, float)) or isinstance(
+            self.decided_at, bool
+        ):
+            raise TypeError("decided_at must be a finite number")
+        if not math.isfinite(float(self.decided_at)):
+            raise ValueError("decided_at must be finite")
+        object.__setattr__(self, "decided_at", float(self.decided_at))
+        if self.resulting_memory_id is not None:
+            _require_identityish(self.resulting_memory_id, "resulting_memory_id")
+        metadata = copy.deepcopy(dict(self.metadata))
+        if not is_json_value(metadata):
+            raise TypeError("admission metadata must be lossless JSON")
+        object.__setattr__(self, "metadata", MappingProxyType(metadata))
+
+    def as_dict(self) -> dict[str, JsonValue]:
+        return {
+            "decision_id": self.decision_id,
+            "proposal_id": self.proposal_id,
+            "decision": self.decision,
+            "decided_by_agent_id": self.decided_by_agent_id,
+            "reason": self.reason,
+            "evidence_provenance": self.evidence_provenance.as_dict(),
+            "decided_at": self.decided_at,
+            "resulting_memory_id": self.resulting_memory_id,
+            "metadata": copy.deepcopy(dict(self.metadata)),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "MemoryAdmissionRecord":
+        expected = {
+            "decision_id",
+            "proposal_id",
+            "decision",
+            "decided_by_agent_id",
+            "reason",
+            "evidence_provenance",
+            "decided_at",
+            "resulting_memory_id",
+            "metadata",
+        }
+        if set(value) != expected:
+            raise ValueError("memory admission record has unexpected fields")
+        evidence = value["evidence_provenance"]
+        if not isinstance(evidence, Mapping):
+            raise TypeError("admission evidence provenance must be an object")
+        metadata = value["metadata"]
+        if not isinstance(metadata, Mapping):
+            raise TypeError("admission metadata must be an object")
+        return cls(
+            decision_id=_required_string(value, "decision_id"),
+            proposal_id=_required_string(value, "proposal_id"),
+            decision=_required_admission_decision(value.get("decision")),
+            decided_by_agent_id=_required_string(value, "decided_by_agent_id"),
+            reason=_required_string(value, "reason"),
+            evidence_provenance=MemoryProvenance.from_dict(evidence),
+            decided_at=_finite_number(value, "decided_at"),
+            resulting_memory_id=_optional_string(value, "resulting_memory_id"),
+            metadata=copy.deepcopy(dict(metadata)),
         )
 
 
@@ -361,6 +588,8 @@ class MemoryEvent:
     def __post_init__(self) -> None:
         _require_identityish(self.event_id, "event_id")
         if self.event_type not in {
+            "memory/proposed",
+            "memory/admission",
             "memory/remembered",
             "memory/superseded",
             "memory/forgotten",
@@ -510,6 +739,38 @@ def _required_lifecycle_state(value: object) -> MemoryLifecycleState:
     if value not in {"ACTIVE", "SUPERSEDED", "FORGOTTEN", "STALE"}:
         raise ValueError("lifecycle_state must be ACTIVE, SUPERSEDED, FORGOTTEN, or STALE")
     return value  # type: ignore[return-value]
+
+
+def _required_admission_state(value: object) -> MemoryAdmissionState:
+    if value not in {"PROPOSED", "ADMITTED", "QUARANTINED", "REJECTED"}:
+        raise ValueError(
+            "admission_state must be PROPOSED, ADMITTED, QUARANTINED, or REJECTED"
+        )
+    return value  # type: ignore[return-value]
+
+
+def _required_admission_decision(value: object) -> MemoryAdmissionDecision:
+    if value not in {"ADMIT", "QUARANTINE", "REJECT"}:
+        raise ValueError("admission decision must be ADMIT, QUARANTINE, or REJECT")
+    return value  # type: ignore[return-value]
+
+
+def _required_source_class(value: object) -> MemorySourceClass:
+    if value not in {
+        "USER_EXPLICIT",
+        "HOST_VERIFIED",
+        "AGENT_INFERRED",
+        "TOOL_DERIVED",
+        "EXTERNAL_UNTRUSTED",
+    }:
+        raise ValueError("unsupported memory source_class")
+    return value  # type: ignore[return-value]
+
+
+def _optional_source_class(value: object) -> MemorySourceClass | None:
+    if value is None:
+        return None
+    return _required_source_class(value)
 
 
 def _required_sequence_string(value: object, name: str) -> str:
