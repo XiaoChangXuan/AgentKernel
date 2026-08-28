@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import tempfile
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,7 +153,25 @@ def _step(name: str, detail: Any) -> dict[str, Any]:
 
 
 def _run(coro: Any) -> Any:
-    return asyncio.run(coro)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as error:
+            result["error"] = error
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result["value"]
 
 
 async def _add(
