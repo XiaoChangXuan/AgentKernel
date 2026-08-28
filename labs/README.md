@@ -60,13 +60,32 @@ Capability、Resource、Process 等 AgentKernel 执行路径仍然是真实代�
 OpenAI-compatible Lab LLM adapter。真实模型运行用于 demo，不作为 deterministic CI
 oracle，也不会展示 hidden chain-of-thought。
 
-真实模型配置使用：
+真实模型配置优先使用 lab 专用环境变量：
 
 ```powershell
 $env:AGENTKERNEL_LAB_LLM_BASE_URL="https://..."
 $env:AGENTKERNEL_LAB_LLM_MODEL="..."
 $env:AGENTKERNEL_LAB_LLM_API_KEY="..."
 ```
+
+如果没有设置这些环境变量，Lab 会复用 MiniCode 的本地配置：
+
+```json
+{
+  "model": "openai-compatible",
+  "allow_network": true,
+  "openai_compatible": {
+    "base_url": "https://...",
+    "model": "provider/model",
+    "api_key": "<local secret>"
+  }
+}
+```
+
+也就是说，仓库根目录下的 `.minicode/config.json` 可以直接驱动
+`MODE = "real_model"`。`.minicode/` 是本地 secret 配置目录，已经被
+`.gitignore` 排除，不要提交。Notebook 只会展示 `base_url`、`model`、
+`config_source`、`api_key_configured` 这类脱敏 metadata，不展示 key。
 
 真实模式只有在 provider 请求成功时，才表示：
 

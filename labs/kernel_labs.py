@@ -64,7 +64,10 @@ from agentkernel.providers import OpenAICompatibleConfig, OpenAICompatibleLLM
 from agentkernel.protocol import JsonValue
 from agentkernel.tool_effects import ReconcileStatus, ToolEffectKind
 from minicode.durable_patch import DurableApplyPatchAdapter, hash_file_or_absent
+from minicode.config import load_environment_files, load_project_config
+from minicode.errors import MiniCodeError
 from minicode.patch import apply_mutation_plan
+from minicode.patch.parser import PatchError
 from minicode.testing import make_minicode_workspace
 from minicode.tools import (
     APPLY_PATCH_NAME,
@@ -76,6 +79,20 @@ from minicode.workspace import discover_workspace
 
 
 LabPayload = dict[str, Any]
+LAB_LLM_BASE_URL_ENV = "AGENTKERNEL_LAB_LLM_BASE_URL"
+LAB_LLM_MODEL_ENV = "AGENTKERNEL_LAB_LLM_MODEL"
+LAB_LLM_API_KEY_ENV = "AGENTKERNEL_LAB_LLM_API_KEY"
+LAB_LLM_TIMEOUT_MS_ENV = "AGENTKERNEL_LAB_LLM_TIMEOUT_MS"
+
+
+@dataclass(frozen=True)
+class LabLLMConfig:
+    base_url: str
+    model: str
+    api_key: str | None
+    timeout_seconds: float
+    allow_network: bool
+    source: str
 
 
 @dataclass(frozen=True)
@@ -254,6 +271,18 @@ def _response_payload(response: ModelResponse) -> dict[str, Any]:
     }
 
 
+def _minicode_error_payload(error: MiniCodeError) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "code": error.code,
+        "message": error.message,
+        "retryable": error.retryable,
+    }
+    diagnostics = getattr(error, "diagnostics", None)
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+    return payload
+
+
 def _events_payload(session: Session) -> list[dict[str, Any]]:
     return [
         {
@@ -266,23 +295,22 @@ def _events_payload(session: Session) -> list[dict[str, Any]]:
 
 
 class LabOpenAICompatibleLLM:
-    """Lab-only adapter using AGENTKERNEL_LAB_LLM_* environment variables."""
+    """Lab-only adapter using env vars or local MiniCode project config."""
 
     def __init__(self) -> None:
-        self.base_url = os.environ.get("AGENTKERNEL_LAB_LLM_BASE_URL", "").strip()
-        self.model = os.environ.get("AGENTKERNEL_LAB_LLM_MODEL", "").strip()
-        self.api_key = os.environ.get("AGENTKERNEL_LAB_LLM_API_KEY", "").strip()
-        if not self.base_url or not self.model:
-            raise RuntimeError(
-                "real_model mode requires AGENTKERNEL_LAB_LLM_BASE_URL and "
-                "AGENTKERNEL_LAB_LLM_MODEL"
-            )
+        config = _load_lab_llm_config()
+        self.base_url = config.base_url
+        self.model = config.model
+        self.api_key = config.api_key
+        self.timeout_seconds = config.timeout_seconds
+        self.allow_network = config.allow_network
+        self.source = config.source
         self._llm = OpenAICompatibleLLM(
             OpenAICompatibleConfig(
                 base_url=self.base_url,
                 model=self.model,
-                api_key=self.api_key or None,
-                timeout_seconds=60.0,
+                api_key=self.api_key,
+                timeout_seconds=self.timeout_seconds,
             )
         )
         self.requests: list[ModelRequest] = []
@@ -294,6 +322,9 @@ class LabOpenAICompatibleLLM:
             "provider": "openai-compatible",
             "model": self.model,
             "base_url": self.base_url,
+            "config_source": self.source,
+            "allow_network": self.allow_network,
+            "api_key_configured": bool(self.api_key),
             "request_count": len(self.requests),
         }
 
@@ -302,6 +333,151 @@ class LabOpenAICompatibleLLM:
         response = await self._llm.generate(request)
         self.responses.append(response)
         return response
+
+
+def _load_lab_llm_config() -> LabLLMConfig:
+    env_file_values: dict[str, str] = {}
+    project_config = None
+    repo_root = _find_agentkernel_root(Path.cwd())
+    try:
+        env_file_values = load_environment_files(repo_root)
+        project_config = load_project_config(repo_root)
+    except MiniCodeError as error:
+        raise RuntimeError(f"could not load MiniCode lab model config: {error}") from error
+
+    lab_base_url = _env_value(LAB_LLM_BASE_URL_ENV, env_file_values)
+    lab_model = _env_value(LAB_LLM_MODEL_ENV, env_file_values)
+    lab_api_key = _env_value(LAB_LLM_API_KEY_ENV, env_file_values)
+    if lab_base_url or lab_model:
+        if not lab_base_url or not lab_model:
+            raise RuntimeError(
+                "real_model mode with AGENTKERNEL_LAB_LLM_* requires both "
+                f"{LAB_LLM_BASE_URL_ENV} and {LAB_LLM_MODEL_ENV}"
+            )
+        return LabLLMConfig(
+            base_url=lab_base_url,
+            model=lab_model,
+            api_key=lab_api_key,
+            timeout_seconds=_env_timeout_seconds(env_file_values, default=60.0),
+            allow_network=True,
+            source="env:AGENTKERNEL_LAB_LLM_*",
+        )
+
+    base_url = (
+        _env_value("MINICODE_LLM_BASE_URL", env_file_values)
+        or _env_value("AGENTKERNEL_LLM_BASE_URL", env_file_values)
+        or (project_config.base_url if project_config else None)
+    )
+    model = (
+        _env_value("MINICODE_LLM_MODEL", env_file_values)
+        or _env_value("AGENTKERNEL_LLM_MODEL", env_file_values)
+        or (project_config.model_name if project_config else None)
+    )
+    api_key = (
+        _env_value("MINICODE_LLM_API_KEY", env_file_values)
+        or _env_value("AGENTKERNEL_LLM_API_KEY", env_file_values)
+        or (project_config.api_key if project_config else None)
+    )
+    allow_network = _env_bool("MINICODE_ALLOW_NETWORK", env_file_values)
+    if allow_network is None and project_config is not None:
+        allow_network = project_config.allow_network
+    if allow_network is not True:
+        raise RuntimeError(
+            'real_model mode requires network opt-in: set "allow_network": true in '
+            ".minicode/config.json, MINICODE_ALLOW_NETWORK=true, or use "
+            "AGENTKERNEL_LAB_LLM_* environment variables"
+        )
+    if not base_url or not model:
+        raise RuntimeError(
+            "real_model mode requires OpenAI-compatible base_url and model from "
+            "AGENTKERNEL_LAB_LLM_*, MINICODE_LLM_*, AGENTKERNEL_LLM_*, "
+            "or .minicode/config.json"
+        )
+    return LabLLMConfig(
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout_seconds=_env_timeout_seconds(
+            env_file_values,
+            default=((project_config.timeout_ms or 60_000) / 1000 if project_config else 60.0),
+        ),
+        allow_network=True,
+        source=_lab_config_source(
+            env_file_values=env_file_values,
+            project_config_path=project_config.path if project_config else None,
+        ),
+    )
+
+
+def _find_agentkernel_root(start: Path) -> Path:
+    for path in (start.resolve(), *start.resolve().parents):
+        if (path / "agentkernel").is_dir() and (path / "labs").is_dir():
+            return path
+    return Path(__file__).resolve().parents[1]
+
+
+def _env_value(name: str, env_file_values: Mapping[str, str]) -> str | None:
+    value = os.environ.get(name)
+    if value is None:
+        value = env_file_values.get(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _env_bool(name: str, env_file_values: Mapping[str, str]) -> bool | None:
+    value = _env_value(name, env_file_values)
+    if value is None:
+        return None
+    normalized = value.lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be true or false")
+
+
+def _env_timeout_seconds(
+    env_file_values: Mapping[str, str],
+    *,
+    default: float,
+) -> float:
+    value = _env_value(LAB_LLM_TIMEOUT_MS_ENV, env_file_values) or _env_value(
+        "MINICODE_TIMEOUT_MS",
+        env_file_values,
+    )
+    if value is None:
+        return default
+    try:
+        timeout_ms = int(value)
+    except ValueError as error:
+        raise RuntimeError("lab LLM timeout must be a positive integer in milliseconds") from error
+    if timeout_ms <= 0:
+        raise RuntimeError("lab LLM timeout must be a positive integer in milliseconds")
+    return timeout_ms / 1000
+
+
+def _lab_config_source(
+    *,
+    env_file_values: Mapping[str, str],
+    project_config_path: Path | None,
+) -> str:
+    if (
+        _env_value("MINICODE_LLM_BASE_URL", env_file_values)
+        or _env_value("MINICODE_LLM_MODEL", env_file_values)
+        or _env_value("MINICODE_LLM_API_KEY", env_file_values)
+    ):
+        return "env:MINICODE_LLM_*"
+    if (
+        _env_value("AGENTKERNEL_LLM_BASE_URL", env_file_values)
+        or _env_value("AGENTKERNEL_LLM_MODEL", env_file_values)
+        or _env_value("AGENTKERNEL_LLM_API_KEY", env_file_values)
+    ):
+        return "env:AGENTKERNEL_LLM_*"
+    if project_config_path is not None:
+        return str(project_config_path)
+    return "unknown"
 
 
 class InteractiveLab:
@@ -386,7 +562,8 @@ class V01ExecutionSpineLab(InteractiveLab):
             tools=tools.model_schemas(agent.control),
             system_prompt=(
                 "You are an AgentKernel lab assistant. Use calculator.divide "
-                "when arithmetic division is needed."
+                "when arithmetic division is needed. For this lab, return exactly "
+                'one calculator.divide tool call with arguments {"a": 8, "b": 2}.'
             ),
         )
         self.state.update(
@@ -763,7 +940,16 @@ class V03DurableSideEffectLab(InteractiveLab):
             tools=registry.model_schemas(agent.control),
             system_prompt=(
                 "You are an AgentKernel V0.3 lab assistant. Propose exactly one "
-                "apply_patch tool call for the requested file change."
+                "apply_patch tool call for the requested file change. The patch "
+                "argument must use this exact Codex-style format, not unified diff "
+                "headers. For this lab, preserve the exact eight-space indentation "
+                "shown in the old line:\n"
+                "*** Begin Patch\n"
+                "*** Update File: calculator.py\n"
+                "@@\n"
+                "-        raise ZeroDivisionError('division by zero')\n"
+                "+        return None\n"
+                "*** End Patch"
             ),
         )
         self.state.update(
@@ -811,28 +997,44 @@ class V03DurableSideEffectLab(InteractiveLab):
             ]
             if matching_calls:
                 call = matching_calls[0]
-                prepared = DurableApplyPatchAdapter(self.state["registry"]).prepare_call(
-                    self.state["workspace"],
-                    call,
-                    self.state["agent"].control,
-                )
-                self.state.update(
-                    {
-                        "call": call,
-                        "prepared": prepared,
-                        "patch": str(call.arguments.get("patch", "")),
-                        "real_model_missing_tool_call": False,
-                    }
-                )
+                try:
+                    prepared = DurableApplyPatchAdapter(self.state["registry"]).prepare_call(
+                        self.state["workspace"],
+                        call,
+                        self.state["agent"].control,
+                    )
+                except PatchError as error:
+                    self.state.update(
+                        {
+                            "call": call,
+                            "patch": str(call.arguments.get("patch", "")),
+                            "real_model_missing_tool_call": True,
+                            "real_model_patch_error": _minicode_error_payload(error),
+                        }
+                    )
+                else:
+                    self.state.update(
+                        {
+                            "call": call,
+                            "prepared": prepared,
+                            "patch": str(call.arguments.get("patch", "")),
+                            "real_model_missing_tool_call": False,
+                            "real_model_patch_error": None,
+                        }
+                    )
             else:
                 self.state["real_model_missing_tool_call"] = True
+                self.state["real_model_patch_error"] = None
             return _show(
                 "Observable model response",
                 {
                     "model_visible_request": _request_payload(self.state["request"]),
                     "provider_metadata": self._llm_metadata(),
                     "response": _response_payload(response),
-                    "accepted_apply_patch_tool_call": bool(matching_calls),
+                    "accepted_apply_patch_tool_call": bool(
+                        matching_calls and not self.state.get("real_model_patch_error")
+                    ),
+                    "patch_parse_error": self.state.get("real_model_patch_error"),
                     "hidden_chain_of_thought": "not requested and not displayed",
                 },
             )
@@ -850,7 +1052,7 @@ class V03DurableSideEffectLab(InteractiveLab):
     def prepare(self) -> dict[str, Any]:
         if self.state.get("real_model_missing_tool_call"):
             raise RuntimeError(
-                "real_model did not propose apply_patch; stop here and inspect the observable response"
+                "real_model did not produce an accepted apply_patch; stop here and inspect the observable response"
             )
         session: Session = self.state["session"]
         prepared = self.state["prepared"]
