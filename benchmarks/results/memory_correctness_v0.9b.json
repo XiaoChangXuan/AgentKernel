@@ -1,0 +1,228 @@
+{
+  "cases": [
+    {
+      "case_id": "C1",
+      "evidence": {
+        "default_result_count": 0,
+        "evidence_source": "current-observation",
+        "explicit_stale_result_ids": [
+          "mem_0000"
+        ],
+        "history_status": "STALE",
+        "stale_memory_id": "mem_0000"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/stale",
+        "default active retrieval",
+        "history"
+      ],
+      "name": "Staleness",
+      "oracle": "Stale memory is hidden by default but durable history restores it after restart.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C2",
+      "evidence": {
+        "active_ids": [
+          "mem_0002"
+        ],
+        "chain": {
+          "mem_0000": "mem_0001",
+          "mem_0001": "mem_0002",
+          "mem_0002": "mem_0001"
+        }
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/superseded",
+        "active projection",
+        "history"
+      ],
+      "name": "Supersede Chain",
+      "oracle": "M1 -> M2 -> M3 leaves only M3 active while history preserves the chain.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C3",
+      "evidence": {
+        "after_events": 3,
+        "before_events": 3,
+        "denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "MemoryService.supersede",
+        "append-only durable state"
+      ],
+      "name": "Cycle Rejection",
+      "oracle": "Attempted M2 -> M1 cycle is rejected before durable state changes.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C4",
+      "evidence": {
+        "active_ids": [
+          "mem_0001",
+          "mem_0000"
+        ],
+        "conflict_group": "conflict_mem_0000_mem_0001",
+        "relations": {
+          "mem_0000": [
+            "mem_0001"
+          ],
+          "mem_0001": [
+            "mem_0000"
+          ]
+        }
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "memory/conflict",
+        "active retrieval"
+      ],
+      "name": "Conflict Preservation",
+      "oracle": "Explicit conflict keeps both active memories and attaches relation metadata.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C5",
+      "evidence": {
+        "cross_scope_conflict_rejected": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "namespace",
+        "explicit conflict API"
+      ],
+      "name": "Scope Separation",
+      "oracle": "Kernel does not infer conflict and rejects explicit conflict across owner namespace.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C6",
+      "evidence": {
+        "evidence": {
+          "note": "pyproject.toml requires-python >=3.12",
+          "source": "current-observation",
+          "source_agent_id": "agent-a",
+          "source_event_id": "tool-result-9",
+          "source_session_id": "session-current",
+          "source_tool_name": "read_file"
+        },
+        "stale_at": 99.0,
+        "status": "STALE"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "stale provenance",
+        "JsonlMemoryStore"
+      ],
+      "name": "Freshness Evidence",
+      "oracle": "Freshness evidence source survives restart with stale lifecycle metadata.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C7",
+      "evidence": {
+        "read_only_mutation_denied": true
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "CapabilityEvaluator",
+        "memory.write lifecycle mutation"
+      ],
+      "name": "Capability Isolation",
+      "oracle": "Read authority is not enough to mark stale.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C8",
+      "evidence": {
+        "history_count": 500,
+        "selected_count": 200,
+        "selected_states": [
+          "ACTIVE"
+        ]
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "Context projection",
+        "Memory lifecycle filtering"
+      ],
+      "name": "Context Filtering",
+      "oracle": "Default projection excludes stale, superseded, and forgotten memories.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C9",
+      "evidence": {
+        "contains_conflict_group": true,
+        "contains_python": true,
+        "contains_rust": true,
+        "selected_count": 2
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "Conflict-aware Context projection"
+      ],
+      "name": "Conflict Projection",
+      "oracle": "Conflict projection includes both memories, status, provenance, and relation.",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C10",
+      "evidence": {
+        "conflict_relations": {
+          "mem_0001": [
+            "mem_0002"
+          ],
+          "mem_0002": [
+            "mem_0001"
+          ]
+        },
+        "stale_status": "STALE",
+        "superseded_by": "mem_0004"
+      },
+      "limitations": [
+        "Synthetic deterministic fixture; no truth verification, embeddings, or LLM judge."
+      ],
+      "mechanism_under_test": [
+        "JsonlMemoryStore",
+        "lifecycle projection"
+      ],
+      "name": "Restart Durability",
+      "oracle": "Stale, conflict, and supersede metadata recover in a fresh runtime.",
+      "status": "PASS"
+    }
+  ],
+  "commit": "34a0b18",
+  "decision": "PASS",
+  "deterministic": true,
+  "failed": 0,
+  "network": "not_used",
+  "offline": true,
+  "passed": 10,
+  "runtime_version": "AgentKernel V0.9B",
+  "timestamp": "2026-08-28T06:01:27.633763+00:00",
+  "total": 10,
+  "version": "0.9B"
+}

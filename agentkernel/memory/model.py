@@ -17,7 +17,14 @@ MEMORY_WRITE_ACTION = "memory.write"
 MEMORY_FORGET_ACTION = "memory.forget"
 MEMORY_RESOURCE_SCOPE = "memory://**"
 
-MemoryEventType = Literal["memory/remembered", "memory/superseded", "memory/forgotten"]
+MemoryLifecycleState = Literal["ACTIVE", "SUPERSEDED", "FORGOTTEN", "STALE"]
+MemoryEventType = Literal[
+    "memory/remembered",
+    "memory/superseded",
+    "memory/forgotten",
+    "memory/stale",
+    "memory/conflict",
+]
 
 _IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
@@ -117,6 +124,14 @@ class MemoryRecord:
     active: bool = True
     superseded_by_memory_id: str | None = None
     forgotten_at: float | None = None
+    lifecycle_state: MemoryLifecycleState = "ACTIVE"
+    stale_at: float | None = None
+    stale_reason: str | None = None
+    stale_provenance: MemoryProvenance | None = None
+    conflict_group_id: str | None = None
+    conflicts_with_memory_ids: tuple[str, ...] = ()
+    conflict_reason: str | None = None
+    conflict_provenance: MemoryProvenance | None = None
 
     def __post_init__(self) -> None:
         _require_identityish(self.memory_id, "memory_id")
@@ -147,16 +162,61 @@ class MemoryRecord:
             if not math.isfinite(float(self.forgotten_at)):
                 raise ValueError("forgotten_at must be finite")
             object.__setattr__(self, "forgotten_at", float(self.forgotten_at))
+        if self.lifecycle_state not in {"ACTIVE", "SUPERSEDED", "FORGOTTEN", "STALE"}:
+            raise ValueError("unsupported memory lifecycle_state")
+        if self.stale_at is not None:
+            if not isinstance(self.stale_at, (int, float)) or isinstance(
+                self.stale_at, bool
+            ):
+                raise TypeError("stale_at must be None or a finite number")
+            if not math.isfinite(float(self.stale_at)):
+                raise ValueError("stale_at must be finite")
+            object.__setattr__(self, "stale_at", float(self.stale_at))
+        if self.stale_reason is not None and (
+            not isinstance(self.stale_reason, str) or not self.stale_reason
+        ):
+            raise ValueError("stale_reason must be None or a non-empty string")
+        if self.conflict_group_id is not None:
+            _require_identityish(self.conflict_group_id, "conflict_group_id")
+        conflicts = tuple(self.conflicts_with_memory_ids)
+        for conflict_id in conflicts:
+            _require_identityish(conflict_id, "conflicts_with_memory_ids")
+        if self.memory_id in conflicts:
+            raise ValueError("memory cannot conflict with itself")
+        if len(set(conflicts)) != len(conflicts):
+            raise ValueError("conflicts_with_memory_ids must be unique")
+        object.__setattr__(self, "conflicts_with_memory_ids", tuple(sorted(conflicts)))
+        if self.conflict_reason is not None and (
+            not isinstance(self.conflict_reason, str) or not self.conflict_reason
+        ):
+            raise ValueError("conflict_reason must be None or a non-empty string")
         if not isinstance(self.active, bool):
             raise TypeError("active must be a boolean")
+        expected_active = self.lifecycle_state == "ACTIVE"
+        if self.active is not expected_active:
+            raise ValueError("active must match lifecycle_state")
         if self.active and (
             self.superseded_by_memory_id is not None or self.forgotten_at is not None
         ):
             raise ValueError("active memory cannot be superseded or forgotten")
+        if self.lifecycle_state == "SUPERSEDED" and self.superseded_by_memory_id is None:
+            raise ValueError("SUPERSEDED memory requires superseded_by_memory_id")
+        if self.lifecycle_state == "FORGOTTEN" and self.forgotten_at is None:
+            raise ValueError("FORGOTTEN memory requires forgotten_at")
+        if self.lifecycle_state == "STALE" and (
+            self.stale_at is None
+            or self.stale_reason is None
+            or self.stale_provenance is None
+        ):
+            raise ValueError("STALE memory requires stale metadata")
 
     @property
     def uri(self) -> str:
         return memory_uri(self.owner_agent_id, self.namespace, self.memory_id)
+
+    @property
+    def status(self) -> MemoryLifecycleState:
+        return self.lifecycle_state
 
     def as_dict(self) -> dict[str, JsonValue]:
         return {
@@ -171,6 +231,20 @@ class MemoryRecord:
             "active": self.active,
             "superseded_by_memory_id": self.superseded_by_memory_id,
             "forgotten_at": self.forgotten_at,
+            "lifecycle_state": self.lifecycle_state,
+            "stale_at": self.stale_at,
+            "stale_reason": self.stale_reason,
+            "stale_provenance": (
+                None if self.stale_provenance is None else self.stale_provenance.as_dict()
+            ),
+            "conflict_group_id": self.conflict_group_id,
+            "conflicts_with_memory_ids": list(self.conflicts_with_memory_ids),
+            "conflict_reason": self.conflict_reason,
+            "conflict_provenance": (
+                None
+                if self.conflict_provenance is None
+                else self.conflict_provenance.as_dict()
+            ),
             "uri": self.uri,
         }
 
@@ -188,9 +262,28 @@ class MemoryRecord:
             "active",
             "superseded_by_memory_id",
             "forgotten_at",
+            "lifecycle_state",
+            "stale_at",
+            "stale_reason",
+            "stale_provenance",
+            "conflict_group_id",
+            "conflicts_with_memory_ids",
+            "conflict_reason",
+            "conflict_provenance",
             "uri",
         }
-        if set(value) != expected:
+        legacy_expected = expected - {
+            "lifecycle_state",
+            "stale_at",
+            "stale_reason",
+            "stale_provenance",
+            "conflict_group_id",
+            "conflicts_with_memory_ids",
+            "conflict_reason",
+            "conflict_provenance",
+        }
+        fields = set(value)
+        if fields != expected and fields != legacy_expected:
             raise ValueError("memory record has unexpected fields")
         provenance = value["provenance"]
         if not isinstance(provenance, Mapping):
@@ -198,6 +291,23 @@ class MemoryRecord:
         metadata = value["metadata"]
         if not isinstance(metadata, Mapping):
             raise TypeError("memory metadata must be an object")
+        lifecycle_state = value.get("lifecycle_state")
+        if lifecycle_state is None:
+            if value.get("forgotten_at") is not None:
+                lifecycle_state = "FORGOTTEN"
+            elif value.get("superseded_by_memory_id") is not None:
+                lifecycle_state = "SUPERSEDED"
+            else:
+                lifecycle_state = "ACTIVE"
+        stale_provenance = value.get("stale_provenance")
+        if stale_provenance is not None and not isinstance(stale_provenance, Mapping):
+            raise TypeError("stale_provenance must be null or an object")
+        conflict_provenance = value.get("conflict_provenance")
+        if conflict_provenance is not None and not isinstance(conflict_provenance, Mapping):
+            raise TypeError("conflict_provenance must be null or an object")
+        conflicts = value.get("conflicts_with_memory_ids", ())
+        if not isinstance(conflicts, (list, tuple)):
+            raise TypeError("conflicts_with_memory_ids must be a list")
         record = cls(
             memory_id=_required_string(value, "memory_id"),
             owner_agent_id=_required_string(value, "owner_agent_id"),
@@ -210,6 +320,25 @@ class MemoryRecord:
             active=_required_bool(value, "active"),
             superseded_by_memory_id=_optional_string(value, "superseded_by_memory_id"),
             forgotten_at=_optional_finite_number(value, "forgotten_at"),
+            lifecycle_state=_required_lifecycle_state(lifecycle_state),
+            stale_at=_optional_finite_number(value, "stale_at"),
+            stale_reason=_optional_string(value, "stale_reason"),
+            stale_provenance=(
+                None
+                if stale_provenance is None
+                else MemoryProvenance.from_dict(stale_provenance)
+            ),
+            conflict_group_id=_optional_string(value, "conflict_group_id"),
+            conflicts_with_memory_ids=tuple(
+                _required_sequence_string(item, "conflicts_with_memory_ids")
+                for item in conflicts
+            ),
+            conflict_reason=_optional_string(value, "conflict_reason"),
+            conflict_provenance=(
+                None
+                if conflict_provenance is None
+                else MemoryProvenance.from_dict(conflict_provenance)
+            ),
         )
         if value["uri"] != record.uri:
             raise ValueError("memory record URI does not match identity fields")
@@ -235,6 +364,8 @@ class MemoryEvent:
             "memory/remembered",
             "memory/superseded",
             "memory/forgotten",
+            "memory/stale",
+            "memory/conflict",
         }:
             raise ValueError("unsupported memory event_type")
         for name in ("agent_id", "memory_id", "owner_agent_id", "namespace"):
@@ -373,3 +504,15 @@ def _optional_finite_number(value: Mapping[str, object], name: str) -> float | N
     if not math.isfinite(result):
         raise ValueError(f"{name} must be finite")
     return result
+
+
+def _required_lifecycle_state(value: object) -> MemoryLifecycleState:
+    if value not in {"ACTIVE", "SUPERSEDED", "FORGOTTEN", "STALE"}:
+        raise ValueError("lifecycle_state must be ACTIVE, SUPERSEDED, FORGOTTEN, or STALE")
+    return value  # type: ignore[return-value]
+
+
+def _required_sequence_string(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} entries must be non-empty strings")
+    return value

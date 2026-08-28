@@ -9,13 +9,18 @@ from .model import (
     MemoryCorruptionError,
     MemoryEvent,
     MemoryInvalid,
+    MemoryLifecycleState,
     MemoryNotFound,
     MemoryProvenance,
     MemoryRecord,
     memory_namespace_scope,
     memory_uri,
 )
-from .projection import MemoryContextProjection, project_memories_to_context_pages
+from .projection import (
+    MemoryContextProjection,
+    project_conflicting_memories_to_context_pages,
+    project_memories_to_context_pages,
+)
 from .service import MemoryService
 from .store import InMemoryMemoryStore, JsonlMemoryStore, MemoryStore
 
@@ -31,6 +36,7 @@ __all__ = [
     "MemoryCorruptionError",
     "MemoryEvent",
     "MemoryInvalid",
+    "MemoryLifecycleState",
     "MemoryNotFound",
     "MemoryProvenance",
     "MemoryRecord",
@@ -38,5 +44,6 @@ __all__ = [
     "MemoryStore",
     "memory_namespace_scope",
     "memory_uri",
+    "project_conflicting_memories_to_context_pages",
     "project_memories_to_context_pages",
 ]

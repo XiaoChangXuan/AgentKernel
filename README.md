@@ -83,6 +83,7 @@ External World
 | V0.7 | Process runtime、cooperative scheduler 与 runtime accounting |
 | V0.8 | Agent Registry、Process Tree、Capability Delegation、Kernel IPC、Resource Sharing、runtime isolation、integrated multi-agent recovery 与 Multi-Agent RuntimeBench |
 | V0.9 | Persistent Memory：跨 Session、Agent-scoped、带 provenance、Capability-enforced，并通过 Context VM 有界投影 |
+| V0.9B | Memory Correctness：staleness、explicit conflict、supersession、freshness provenance 与 active retrieval filtering |
 
 ## Kernel 不变量
 
@@ -176,6 +177,37 @@ benchmarks/results/memorybench_v0.9.json
 
 V0.9 adds cross-session persistent memory with provenance, capability enforcement,
 explicit lifecycle, deterministic lexical retrieval, and bounded context projection.
+
+V0.9B 新增 Memory Correctness 评测：
+
+```bash
+python -m benchmarks.memory_correctness
+```
+
+机器可读结果：
+
+```text
+benchmarks/results/memory_correctness_v0.9b.json
+```
+
+当前 Memory Correctness：
+
+| Case | Result |
+| --- | --- |
+| C1 Staleness | PASS |
+| C2 Supersede Chain | PASS |
+| C3 Cycle Rejection | PASS |
+| C4 Conflict Preservation | PASS |
+| C5 Scope Separation | PASS |
+| C6 Freshness Evidence | PASS |
+| C7 Capability Isolation | PASS |
+| C8 Context Filtering | PASS |
+| C9 Conflict Projection | PASS |
+| C10 Restart Durability | PASS |
+
+V0.9B treats Memory as remembered knowledge rather than objective truth. Durable
+memory can become stale, conflict relations are explicit and preserved, and
+default retrieval/projection continue to prefer active memories only.
 
 ## 快速运行
 
@@ -326,6 +358,7 @@ docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md
 - [V0.8 Release Notes](docs/releases/V0.8_RELEASE_NOTES.md)
 - [V0.8 RuntimeBench](docs/evaluation/V0.8_MULTI_AGENT_RUNTIMEBENCH.md)
 - [V0.9 Persistent Memory](docs/memory/V0.9_PERSISTENT_MEMORY.md)
+- [V0.9B Memory Correctness](docs/memory/V0.9B_MEMORY_CORRECTNESS.md)
 - [MiniCode Phase 2F Workload Evaluation](docs/minicode/MINICODE_PHASE2F_WORKLOAD_EVALUATION.md)
 
 教程：
@@ -366,6 +399,7 @@ V0.8 alpha 只支持有边界的 runtime-mechanism claim：
 - V0.8 multi-agent mechanisms 在 deterministic offline fixtures 中保持已测试的 identity、delegation、IPC、resource sharing、budget、fault、cancellation 和 recovery invariants。
 - Multi-agent recovery 能从 durable semantic facts 和当前配置重建运行时机制，不恢复 stale runtime-only authority。
 - Persistent Memory 能在 deterministic offline fixtures 中跨 Session 保留带 provenance 的语义记忆，并保持 capability enforcement、semantic forget、supersede、bounded Context projection 和 rebuildable lexical index 不变量。
+- Memory Correctness 能在 deterministic offline fixtures 中显式保存 staleness、conflict、supersede chain 和 freshness provenance，并保持 default active retrieval/projection filtering。
 
 ## 限制
 
@@ -374,6 +408,7 @@ AgentKernel V0.9 alpha 尚不包含：
 - 通用 RAG framework。
 - embedding service 或 vector database。
 - 自动判断“什么值得记住”的复杂 memory policy。
+- 自动 truth verification、LLM contradiction judge 或 memory poisoning policy。
 - secure physical deletion。
 - Namespace security。
 - 完整 revocation semantics。

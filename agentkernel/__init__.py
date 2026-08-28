@@ -136,6 +136,7 @@ from .memory import (
     MemoryCorruptionError,
     MemoryEvent,
     MemoryInvalid,
+    MemoryLifecycleState,
     MemoryNotFound,
     MemoryProvenance,
     MemoryRecord,
@@ -143,6 +144,7 @@ from .memory import (
     MemoryStore,
     memory_namespace_scope,
     memory_uri,
+    project_conflicting_memories_to_context_pages,
     project_memories_to_context_pages,
 )
 from .prompt import PromptAssembly, PromptService
@@ -350,6 +352,7 @@ __all__ = [
     "MemoryCorruptionError",
     "MemoryEvent",
     "MemoryInvalid",
+    "MemoryLifecycleState",
     "MemoryNotFound",
     "MemoryProvenance",
     "MemoryRecord",
@@ -462,6 +465,7 @@ __all__ = [
     "is_scope_narrower_or_equal",
     "memory_namespace_scope",
     "memory_uri",
+    "project_conflicting_memories_to_context_pages",
     "project_memories_to_context_pages",
     "recover_multi_agent_runtime",
     "resource_tool_definitions",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
@@ -17,6 +18,7 @@ from .model import (
     MemoryAccessDenied,
     MemoryCorruptionError,
     MemoryEvent,
+    MemoryInvalid,
     MemoryNotFound,
     MemoryProvenance,
     MemoryRecord,
@@ -108,6 +110,9 @@ class MemoryService:
         namespace: str | None = None,
         capability_evaluator: CapabilityEvaluator | None = None,
         include_inactive: bool = False,
+        include_stale: bool = False,
+        include_superseded: bool = False,
+        include_forgotten: bool = False,
     ) -> tuple[MemoryRecord, ...]:
         """List projected memories for one owner, optionally namespace-filtered."""
 
@@ -119,13 +124,37 @@ class MemoryService:
         self._authorize(agent_id, MEMORY_READ_ACTION, scope, capability_evaluator)
         records = [
             record
-            for record in self._project_by_id(include_inactive=include_inactive).values()
+            for record in self._project_by_id(include_inactive=True).values()
             if record.owner_agent_id == owner_agent_id
             and (namespace is None or record.namespace == namespace)
-            and (include_inactive or record.active)
+            and _visible_for_options(
+                record,
+                include_inactive=include_inactive,
+                include_stale=include_stale,
+                include_superseded=include_superseded,
+                include_forgotten=include_forgotten,
+            )
         ]
         records.sort(key=lambda item: (item.created_at, item.memory_id))
         return tuple(_clone_record(record) for record in records)
+
+    def history(
+        self,
+        *,
+        agent_id: str,
+        owner_agent_id: str,
+        namespace: str | None = None,
+        capability_evaluator: CapabilityEvaluator | None = None,
+    ) -> tuple[MemoryRecord, ...]:
+        """Return all lifecycle states for audit/debug after memory.read checks."""
+
+        return self.list(
+            agent_id=agent_id,
+            owner_agent_id=owner_agent_id,
+            namespace=namespace,
+            capability_evaluator=capability_evaluator,
+            include_inactive=True,
+        )
 
     def search(
         self,
@@ -136,8 +165,16 @@ class MemoryService:
         query: str,
         limit: int,
         capability_evaluator: CapabilityEvaluator | None = None,
+        include_stale: bool = False,
+        include_superseded: bool = False,
+        include_forgotten: bool = False,
     ) -> tuple[MemoryRecord, ...]:
-        """Return deterministic lexical search results from active memories."""
+        """Return deterministic lexical search results.
+
+        By default this searches only active/usable memories. Stale,
+        superseded, and forgotten records remain durable but require explicit
+        retrieval options or `history()`.
+        """
 
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("search limit must be a positive integer")
@@ -159,10 +196,17 @@ class MemoryService:
                 indexed_ids.update(self._index.get(token, set()))
         candidates = [
             record
-            for record in self._project_by_id(include_inactive=False).values()
+            for record in self._project_by_id(include_inactive=True).values()
             if record.owner_agent_id == owner_agent_id
             and (namespace is None or record.namespace == namespace)
             and (indexed_ids is None or record.memory_id in indexed_ids)
+            and _visible_for_options(
+                record,
+                include_inactive=False,
+                include_stale=include_stale,
+                include_superseded=include_superseded,
+                include_forgotten=include_forgotten,
+            )
         ]
         ranked = [
             (_score(record, query, query_tokens), -record.created_at, record.memory_id, record)
@@ -225,6 +269,89 @@ class MemoryService:
         self._index = None
         return new
 
+    def mark_stale(
+        self,
+        uri_or_memory_id: str,
+        *,
+        agent_id: str,
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        observed_at: float | None = None,
+    ) -> MemoryRecord:
+        """Mark one memory stale with explicit freshness evidence provenance."""
+
+        if not isinstance(reason, str) or not reason:
+            raise MemoryInvalid("stale reason must be a non-empty string")
+        if observed_at is not None and (
+            isinstance(observed_at, bool)
+            or not isinstance(observed_at, (int, float))
+            or not math.isfinite(float(observed_at))
+        ):
+            raise MemoryInvalid("observed_at must be None or a finite number")
+        record = self._resolve(uri_or_memory_id)
+        self._authorize(agent_id, MEMORY_WRITE_ACTION, record.uri, capability_evaluator)
+        self._store.append(
+            self._event(
+                "memory/stale",
+                agent_id=agent_id,
+                record=record,
+                data={
+                    "memory_id": record.memory_id,
+                    "uri": record.uri,
+                    "reason": reason,
+                    "evidence_provenance": evidence_provenance.as_dict(),
+                    "observed_at": observed_at,
+                },
+            )
+        )
+        self._store.flush()
+        self._index = None
+        return _clone_record(
+            self._resolve(record.memory_id, include_inactive=True)
+        )
+
+    def mark_conflict(
+        self,
+        *,
+        agent_id: str,
+        memory_ids: Iterable[str],
+        reason: str,
+        evidence_provenance: MemoryProvenance,
+        capability_evaluator: CapabilityEvaluator | None = None,
+        conflict_group_id: str | None = None,
+    ) -> tuple[MemoryRecord, ...]:
+        """Persist an explicit conflict relation without resolving belief."""
+
+        ids = tuple(dict.fromkeys(memory_ids))
+        if len(ids) < 2:
+            raise MemoryInvalid("conflict relation requires at least two memories")
+        if not isinstance(reason, str) or not reason:
+            raise MemoryInvalid("conflict reason must be a non-empty string")
+        records = tuple(self._resolve(memory_id) for memory_id in ids)
+        owner_namespace = {(record.owner_agent_id, record.namespace) for record in records}
+        if len(owner_namespace) != 1:
+            raise MemoryInvalid("conflict relation must stay within one owner namespace")
+        for record in records:
+            self._authorize(agent_id, MEMORY_WRITE_ACTION, record.uri, capability_evaluator)
+        group_id = conflict_group_id or _stable_conflict_group_id(ids)
+        event = self._event(
+            "memory/conflict",
+            agent_id=agent_id,
+            record=records[0],
+            data={
+                "memory_ids": list(ids),
+                "conflict_group_id": group_id,
+                "reason": reason,
+                "evidence_provenance": evidence_provenance.as_dict(),
+            },
+        )
+        self._store.append(event)
+        self._store.flush()
+        self._index = None
+        projected = self._project_by_id(include_inactive=True)
+        return tuple(_clone_record(projected[memory_id]) for memory_id in ids)
+
     def forget(
         self,
         uri_or_memory_id: str,
@@ -258,7 +385,7 @@ class MemoryService:
     def rebuild_index(self) -> None:
         """Rebuild the lexical search projection from durable facts."""
 
-        self._index = _build_index(self._project_by_id(include_inactive=False).values())
+        self._index = _build_index(self._project_by_id(include_inactive=True).values())
 
     def drop_index(self) -> None:
         """Discard the rebuildable search index projection."""
@@ -356,7 +483,14 @@ def _project_records(events: Iterable[MemoryEvent]) -> dict[str, MemoryRecord]:
                 raise MemoryCorruptionError("superseded event targets inactive memory")
             if new.supersedes_memory_id != old.memory_id:
                 raise MemoryCorruptionError("new memory does not declare supersession")
-            records[old_id] = replace(old, active=False, superseded_by_memory_id=new_id)
+            if _would_create_supersede_cycle(records, old_id, new_id):
+                raise MemoryCorruptionError("superseded event would create a cycle")
+            records[old_id] = replace(
+                old,
+                active=False,
+                lifecycle_state="SUPERSEDED",
+                superseded_by_memory_id=new_id,
+            )
             continue
         if event.event_type == "memory/forgotten":
             record = records.get(event.memory_id)
@@ -366,7 +500,77 @@ def _project_records(events: Iterable[MemoryEvent]) -> dict[str, MemoryRecord]:
                 records[event.memory_id] = replace(
                     record,
                     active=False,
+                    lifecycle_state="FORGOTTEN",
                     forgotten_at=event.created_at,
+                )
+            continue
+        if event.event_type == "memory/stale":
+            record = records.get(event.memory_id)
+            if record is None:
+                raise MemoryCorruptionError("stale event references missing memory")
+            if not record.active:
+                raise MemoryCorruptionError("stale event targets inactive memory")
+            reason = event.data.get("reason")
+            evidence = event.data.get("evidence_provenance")
+            observed_at = event.data.get("observed_at")
+            if not isinstance(reason, str) or not reason:
+                raise MemoryCorruptionError("stale event lacks reason")
+            if not isinstance(evidence, Mapping):
+                raise MemoryCorruptionError("stale event lacks evidence provenance")
+            stale_at = event.created_at if observed_at is None else observed_at
+            records[event.memory_id] = replace(
+                record,
+                active=False,
+                lifecycle_state="STALE",
+                stale_at=stale_at,
+                stale_reason=reason,
+                stale_provenance=MemoryProvenance.from_dict(evidence),
+            )
+            continue
+        if event.event_type == "memory/conflict":
+            raw_ids = event.data.get("memory_ids")
+            group_id = event.data.get("conflict_group_id")
+            reason = event.data.get("reason")
+            evidence = event.data.get("evidence_provenance")
+            if not isinstance(raw_ids, list) or len(raw_ids) < 2:
+                raise MemoryCorruptionError("conflict event lacks memory_ids")
+            if not all(isinstance(item, str) and item for item in raw_ids):
+                raise MemoryCorruptionError("conflict memory_ids must be strings")
+            if not isinstance(group_id, str) or not group_id:
+                raise MemoryCorruptionError("conflict event lacks conflict_group_id")
+            if not isinstance(reason, str) or not reason:
+                raise MemoryCorruptionError("conflict event lacks reason")
+            if not isinstance(evidence, Mapping):
+                raise MemoryCorruptionError("conflict event lacks evidence provenance")
+            ids = tuple(raw_ids)
+            present = [records.get(memory_id) for memory_id in ids]
+            if any(record is None for record in present):
+                raise MemoryCorruptionError("conflict event references missing memory")
+            assert all(record is not None for record in present)
+            owner_namespace = {
+                (record.owner_agent_id, record.namespace)
+                for record in present
+                if record is not None
+            }
+            if len(owner_namespace) != 1:
+                raise MemoryCorruptionError("conflict relation crosses owner namespace")
+            provenance = MemoryProvenance.from_dict(evidence)
+            for memory_id in ids:
+                record = records[memory_id]
+                merged_conflicts = tuple(
+                    sorted(
+                        {
+                            *record.conflicts_with_memory_ids,
+                            *(other_id for other_id in ids if other_id != memory_id),
+                        }
+                    )
+                )
+                records[memory_id] = replace(
+                    record,
+                    conflict_group_id=group_id,
+                    conflicts_with_memory_ids=merged_conflicts,
+                    conflict_reason=reason,
+                    conflict_provenance=provenance,
                 )
             continue
         raise MemoryCorruptionError(f"unsupported memory event: {event.event_type}")
@@ -421,3 +625,46 @@ def _new_memory_event_id() -> str:
 
 def _clone_record(record: MemoryRecord) -> MemoryRecord:
     return MemoryRecord.from_dict(record.as_dict())
+
+
+def _visible_for_options(
+    record: MemoryRecord,
+    *,
+    include_inactive: bool,
+    include_stale: bool,
+    include_superseded: bool,
+    include_forgotten: bool,
+) -> bool:
+    if record.lifecycle_state == "ACTIVE":
+        return True
+    if include_inactive:
+        return True
+    if record.lifecycle_state == "STALE":
+        return include_stale
+    if record.lifecycle_state == "SUPERSEDED":
+        return include_superseded
+    if record.lifecycle_state == "FORGOTTEN":
+        return include_forgotten
+    return False
+
+
+def _stable_conflict_group_id(memory_ids: Iterable[str]) -> str:
+    return "conflict_" + "_".join(sorted(memory_ids))
+
+
+def _would_create_supersede_cycle(
+    records: Mapping[str, MemoryRecord],
+    old_id: str,
+    new_id: str,
+) -> bool:
+    cursor: str | None = old_id
+    seen: set[str] = set()
+    while cursor is not None:
+        if cursor == new_id:
+            return True
+        if cursor in seen:
+            return True
+        seen.add(cursor)
+        record = records.get(cursor)
+        cursor = None if record is None else record.supersedes_memory_id
+    return False
