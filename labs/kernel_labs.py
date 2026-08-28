@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
 import threading
 from collections.abc import Callable, Mapping
@@ -119,7 +120,17 @@ def create_lab(lab_id: str, *, mode: str = "deterministic") -> "InteractiveLab":
         return V02CrashRecoveryLab(normalized)
     if lab_id == "v03":
         return V03DurableSideEffectLab(normalized)
-    raise KeyError(f"interactive controller is only implemented for v01-v03: {lab_id}")
+    if lab_id == "v04":
+        return V04ContextVMLab(normalized)
+    if lab_id == "v05":
+        return V05ResourceHandleLab(normalized)
+    if lab_id == "v06":
+        return V06CapabilityDenialLab(normalized)
+    if lab_id == "v07":
+        return V07ProcessRuntimeLab(normalized)
+    if lab_id == "v08":
+        return V08MultiAgentBoundaryLab(normalized)
+    raise KeyError(f"unknown interactive lab id: {lab_id}")
 
 
 def run_lab(lab_id: str) -> LabPayload:
@@ -216,12 +227,20 @@ async def _write_stub(
 
 
 def _show(title: str, value: Any) -> Any:
-    print(f"\n=== {title} ===")
+    _safe_print(f"\n=== {title} ===")
     if isinstance(value, str):
-        print(value)
+        _safe_print(value)
     else:
-        print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+        _safe_print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
     return value
+
+
+def _safe_print(text: str) -> None:
+    """Print notebook/lab output without crashing on legacy Windows consoles."""
+
+    encoding = sys.stdout.encoding or "utf-8"
+    safe = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    print(safe)
 
 
 def _message_payload(message: Message) -> dict[str, Any]:
@@ -1235,6 +1254,842 @@ class V03DurableSideEffectLab(InteractiveLab):
         )
         self.close()
         return payload
+
+
+class V04ContextVMLab(InteractiveLab):
+    title = "V0.4 Context VM Lab"
+    question = "跑 50 轮后 Session 很大，为什么不全部塞给模型？"
+
+    def setup(self) -> dict[str, Any]:
+        session = Session("lab-v04-session")
+        for turn in range(1, 51):
+            _append_text_turn(
+                session,
+                turn,
+                f"user fact {turn}: " + ("important durable detail " * 8),
+                f"assistant response {turn}: " + ("bounded model-visible text " * 6),
+            )
+        projector = ContextProjector(ApproximateTokenEstimator(1))
+        manager = ContextManager(projector=projector)
+        llm = self._model(
+            [
+                ModelResponse(
+                    content=(
+                        "I can answer from the projected working set while the full "
+                        "Session remains durable truth."
+                    )
+                )
+            ]
+        )
+        self.state.update(
+            {
+                "session": session,
+                "projector": projector,
+                "manager": manager,
+                "llm": llm,
+                "system_prompt": "Answer using only the bounded working set.",
+            }
+        )
+        return _show(
+            "Setup",
+            {
+                "mode": self.mode,
+                "decision_boundary": self.decision_label,
+                "session_id": session.session_id,
+                "turns": 50,
+                "durable_events": len(session.events),
+            },
+        )
+
+    def show_session_truth(self) -> dict[str, Any]:
+        session: Session = self.state["session"]
+        messages = session.derive_messages()
+        return _show(
+            "Durable Session truth",
+            {
+                "durable_events": len(session.events),
+                "full_history_messages": len(messages),
+                "first_message": _message_payload(messages[0]),
+                "last_message": _message_payload(messages[-1]),
+                "truth_location": "Session event log, not model context",
+            },
+        )
+
+    def build_working_set(self) -> dict[str, Any]:
+        session: Session = self.state["session"]
+        projector: ContextProjector = self.state["projector"]
+        manager: ContextManager = self.state["manager"]
+        all_pages = projector.project(session, system_prompt=self.state["system_prompt"])
+        working_set = manager.build_working_set(
+            session,
+            current_turn=50,
+            budget=ContextBudget(max_tokens=800),
+            system_prompt=self.state["system_prompt"],
+        )
+        request = ModelRequest(
+            messages=working_set.to_messages(),
+            system_prompt=working_set.system_prompt,
+        )
+        self.state.update(
+            {"all_pages": all_pages, "working_set": working_set, "request": request}
+        )
+        return _show(
+            "Context VM projection",
+            {
+                "projected_pages": len(all_pages),
+                "selected_pages": working_set.metrics.selected_pages,
+                "evicted_pages": working_set.metrics.evicted_pages,
+                "selected_tokens": working_set.metrics.selected_tokens,
+                "evicted_tokens": working_set.metrics.evicted_tokens,
+                "full_history_messages": len(session.derive_messages()),
+                "model_visible_messages": len(request.messages),
+            },
+        )
+
+    def show_model_request(self) -> dict[str, Any]:
+        return _show("Model-visible request", _request_payload(self.state["request"]))
+
+    def model_step(self) -> dict[str, Any]:
+        response = _run(self.state["llm"].generate(self.state["request"]))
+        self.state["response"] = response
+        return _show(
+            "Observable model response",
+            {
+                "provider_metadata": self._llm_metadata(),
+                "response": _response_payload(response),
+                "hidden_chain_of_thought": "not requested and not displayed",
+            },
+        )
+
+    def summary(self) -> dict[str, Any]:
+        working_set = self.state["working_set"]
+        session: Session = self.state["session"]
+        return _show(
+            "What this proves",
+            {
+                "claim": "Context is a bounded projection; Session remains durable truth.",
+                "durable_truth_events": len(session.events),
+                "model_visible_messages": len(working_set.to_messages()),
+                "context_equals_truth": False,
+                "not_claimed": "The lab does not benchmark semantic retrieval quality.",
+            },
+        )
+
+
+class V05ResourceHandleLab(InteractiveLab):
+    title = "V0.5 Resource Handle Lab"
+    question = "pytest 输出几 MB，为什么不会把 Context 撑爆？"
+
+    def setup(self) -> dict[str, Any]:
+        tmp = tempfile.TemporaryDirectory(prefix="agentkernel-lab-v05-")
+        payload = ("pytest diagnostic line\n" * 100_000).encode("utf-8")
+        owner = ResourceOwner("lab-agent", "lab-v05-session")
+        intruder = ResourceOwner("other-agent", "other-session")
+        service = ResourceService(LocalResourceStore(Path(tmp.name) / "resources"))
+        llm = self._model(
+            [
+                ModelResponse(
+                    content=(
+                        "The preview is enough for the model turn; exact bytes stay "
+                        "behind an authorized ResourceHandle."
+                    )
+                )
+            ]
+        )
+        self.state.update(
+            {
+                "tmp": tmp,
+                "payload": payload,
+                "owner": owner,
+                "intruder": intruder,
+                "service": service,
+                "llm": llm,
+            }
+        )
+        return _show(
+            "Setup",
+            {
+                "mode": self.mode,
+                "decision_boundary": self.decision_label,
+                "source": "simulated pytest output",
+                "stdout_bytes": len(payload),
+            },
+        )
+
+    def show_large_output(self) -> dict[str, Any]:
+        payload: bytes = self.state["payload"]
+        return _show(
+            "Raw command output",
+            {
+                "bytes": len(payload),
+                "full_output_in_model_context": False,
+                "first_80_bytes": payload[:80].decode("utf-8", errors="replace"),
+            },
+        )
+
+    def externalize_output(self) -> dict[str, Any]:
+        service: ResourceService = self.state["service"]
+        handle = service.create_artifact(
+            self.state["payload"],
+            owner=self.state["owner"],
+            media_type="text/plain",
+            encoding="utf-8",
+            source_tool_name="run_command",
+            source_tool_call_id="call-pytest-1",
+            source_operation_id="op-pytest-1",
+        )
+        preview = service.read(handle.uri, owner=self.state["owner"], limit=160)
+        request = ModelRequest(
+            messages=(
+                Message.user(
+                    "A command produced a large stdout artifact. Inspect the preview "
+                    "and explain why the full bytes are not in context.\n\n"
+                    + json.dumps(
+                        {
+                            "resource_handle": handle.as_dict(),
+                            "preview": preview.data.decode("utf-8", errors="replace"),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                ),
+            ),
+            system_prompt="Explain ResourceHandle behavior without assuming the handle is permission.",
+        )
+        self.state.update({"handle": handle, "preview": preview, "request": request})
+        return _show(
+            "Resource externalization",
+            {
+                "handle": handle.as_dict(),
+                "stored_bytes": handle.size_bytes,
+                "model_preview_bytes": len(preview.data),
+                "resource_service_metrics": {
+                    "resources_created": service.metrics.resources_created,
+                    "resource_bytes_stored": service.metrics.resource_bytes_stored,
+                    "resource_reads": service.metrics.resource_reads,
+                    "resource_bytes_read": service.metrics.resource_bytes_read,
+                },
+            },
+        )
+
+    def show_model_request(self) -> dict[str, Any]:
+        return _show("Model-visible request", _request_payload(self.state["request"]))
+
+    def model_step(self) -> dict[str, Any]:
+        response = _run(self.state["llm"].generate(self.state["request"]))
+        self.state["response"] = response
+        return _show(
+            "Observable model response",
+            {
+                "provider_metadata": self._llm_metadata(),
+                "response": _response_payload(response),
+                "hidden_chain_of_thought": "not requested and not displayed",
+            },
+        )
+
+    def authorized_read(self) -> dict[str, Any]:
+        service: ResourceService = self.state["service"]
+        handle = self.state["handle"]
+        read = service.read(handle.uri, owner=self.state["owner"], offset=0, limit=80)
+        return _show(
+            "Authorized ResourceHandle read",
+            {
+                "agent_id": self.state["owner"].agent_id,
+                "handle_uri": handle.uri,
+                "read_bytes": len(read.data),
+                "preview": read.data.decode("utf-8", errors="replace"),
+            },
+        )
+
+    def unauthorized_read(self) -> dict[str, Any]:
+        service: ResourceService = self.state["service"]
+        handle = self.state["handle"]
+        denied = False
+        error = None
+        try:
+            service.read(handle.uri, owner=self.state["intruder"], limit=80)
+        except ResourceAccessDenied as exc:
+            denied = True
+            error = str(exc)
+        return _show(
+            "Unauthorized possession test",
+            {
+                "other_agent_has_uri": handle.uri,
+                "read_denied": denied,
+                "reason": error,
+                "handle_is_permission": False,
+            },
+        )
+
+    def summary(self) -> dict[str, Any]:
+        handle = self.state["handle"]
+        return _show(
+            "What this proves",
+            {
+                "claim": "Large exact bytes stay in ResourceService; context gets a bounded preview.",
+                "stored_bytes": handle.size_bytes,
+                "preview_bytes": len(self.state["preview"].data),
+                "handle_is_permission": False,
+                "not_claimed": "This is not a remote blob store or production sandbox proof.",
+            },
+        )
+
+
+class V06CapabilityDenialLab(InteractiveLab):
+    title = "V0.6 Capability Denial Lab"
+    question = "LLM 明明主动要求修改文件，Kernel 为什么可以拒绝？"
+
+    def setup(self) -> dict[str, Any]:
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                schema=ToolSchema("workspace.write", "Write a file.", {"type": "object"}),
+                handler=_write_stub,
+                required_action=TOOL_EXECUTE_ACTION,
+                required_resource="tool://workspace.write",
+            )
+        )
+        allowed_agent = Agent.create(
+            agent_id="allowed-agent",
+            session=Session("allowed-session"),
+            capability_grants=(
+                CapabilityGrant(
+                    "allowed-agent",
+                    TOOL_EXECUTE_ACTION,
+                    "tool://workspace.write",
+                ),
+            ),
+        )
+        denied_agent = Agent.create(
+            agent_id="denied-agent",
+            session=Session("denied-session"),
+        )
+        request = ModelRequest(
+            messages=(
+                Message.user(
+                    "Please write README.md with the text 'owned by the model'."
+                ),
+            ),
+            tools=registry.model_schemas(denied_agent.control),
+            system_prompt=(
+                "You are an AgentKernel V0.6 lab assistant. You may only use tools "
+                "that the Kernel exposes in this request."
+            ),
+        )
+        llm = self._model(
+            [
+                ModelResponse(
+                    content=(
+                        "No write tool is visible, so I cannot perform the mutation."
+                    )
+                )
+            ]
+        )
+        call = ToolCall("call-write-1", "workspace.write", {"path": "README.md"})
+        self.state.update(
+            {
+                "registry": registry,
+                "allowed_agent": allowed_agent,
+                "denied_agent": denied_agent,
+                "request": request,
+                "llm": llm,
+                "call": call,
+            }
+        )
+        return _show(
+            "Setup",
+            {
+                "mode": self.mode,
+                "decision_boundary": self.decision_label,
+                "denied_agent_id": denied_agent.control.agent_id,
+                "allowed_agent_id": allowed_agent.control.agent_id,
+                "registered_tool": "workspace.write",
+            },
+        )
+
+    def show_model_request(self) -> dict[str, Any]:
+        return _show("Model-visible request", _request_payload(self.state["request"]))
+
+    def model_step(self) -> dict[str, Any]:
+        response = _run(self.state["llm"].generate(self.state["request"]))
+        self.state["response"] = response
+        return _show(
+            "Observable model response",
+            {
+                "provider_metadata": self._llm_metadata(),
+                "response": _response_payload(response),
+                "visible_tool_count": len(self.state["request"].tools),
+                "hidden_chain_of_thought": "not requested and not displayed",
+            },
+        )
+
+    def forced_unauthorized_execution(self) -> dict[str, Any]:
+        result = _run(
+            self.state["registry"].execute(
+                self.state["call"],
+                self.state["denied_agent"].control,
+            )
+        )
+        self.state["denied_result"] = result
+        return _show(
+            "Forced untrusted ToolCall",
+            {
+                "untrusted_proposal": self.state["call"].as_dict(),
+                "kernel_decision": result.as_dict(),
+                "meaning": "Even if a ToolCall is forged outside the model-visible schema, execution is re-authorized.",
+            },
+        )
+
+    def authorized_comparison(self) -> dict[str, Any]:
+        result = _run(
+            self.state["registry"].execute(
+                self.state["call"],
+                self.state["allowed_agent"].control,
+            )
+        )
+        self.state["allowed_result"] = result
+        return _show(
+            "Authorized comparison",
+            {
+                "same_tool_call": self.state["call"].as_dict(),
+                "authorized_agent_result": result.as_dict(),
+            },
+        )
+
+    def summary(self) -> dict[str, Any]:
+        denied = self.state["denied_result"]
+        allowed = self.state["allowed_result"]
+        return _show(
+            "What this proves",
+            {
+                "claim": "Capability is Kernel authority, not model intent.",
+                "unauthorized_hidden_from_model": len(self.state["request"].tools) == 0,
+                "unauthorized_execution_denied": denied.error is not None
+                and denied.error.code is ErrorCode.EACCES,
+                "authorized_execution_allowed": allowed.ok,
+                "not_claimed": "This is not RBAC, IAM, namespace, or OS sandboxing.",
+            },
+        )
+
+
+class V07ProcessRuntimeLab(InteractiveLab):
+    title = "V0.7 Process Runtime Lab"
+    question = "一个 Process 预算耗尽，为什么 Agent authority 仍然独立？"
+
+    def setup(self) -> dict[str, Any]:
+        agent = Agent.create(
+            agent_id="lab-agent",
+            session=Session("lab-v07-session"),
+            budget=AgentBudget(max_token_usage=5),
+        )
+        collector = UsageCollector()
+        scheduler = CooperativeScheduler(usage_collector=collector)
+        process = scheduler.create_process(process_id="process-001", agent=agent.control)
+        request = ModelRequest(
+            messages=(Message.user("Explain the difference between Agent, Process, and Session."),),
+            system_prompt="Answer briefly for an AgentKernel process runtime lab.",
+        )
+        llm = self._model(
+            [
+                ModelResponse(
+                    content="Agent owns authority; Process owns runtime state; Session owns durable facts.",
+                    usage=ModelUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+                )
+            ]
+        )
+        self.state.update(
+            {
+                "agent": agent,
+                "collector": collector,
+                "scheduler": scheduler,
+                "process": process,
+                "request": request,
+                "llm": llm,
+            }
+        )
+        return _show(
+            "Setup",
+            {
+                "mode": self.mode,
+                "decision_boundary": self.decision_label,
+                "agent_id": agent.control.agent_id,
+                "session_id": agent.control.session_id,
+                "process_id": process.process_id,
+                "initial_process_state": process.state.value,
+                "token_budget": agent.control.budget.max_token_usage,
+            },
+        )
+
+    def dispatch(self) -> dict[str, Any]:
+        scheduler: CooperativeScheduler = self.state["scheduler"]
+        process = self.state["process"]
+        scheduler.dispatch(process.process_id)
+        return _show(
+            "Scheduler dispatch",
+            {
+                "process_id": process.process_id,
+                "state": process.state.value,
+                "agent_id": process.agent_id,
+                "session_id": process.session_id,
+            },
+        )
+
+    def show_model_request(self) -> dict[str, Any]:
+        return _show("Model-visible request", _request_payload(self.state["request"]))
+
+    def model_step(self) -> dict[str, Any]:
+        response = _run(self.state["llm"].generate(self.state["request"]))
+        usage = response.usage or ModelUsage(input_tokens=4, output_tokens=2, total_tokens=6)
+        self.state["collector"].record_llm_usage(self.state["process"].process_id, usage)
+        self.state["response"] = response
+        return _show(
+            "Observable model response and usage",
+            {
+                "provider_metadata": self._llm_metadata(),
+                "response": _response_payload(response),
+                "usage_recorded_for_process": self.state["process"].process_id,
+                "hidden_chain_of_thought": "not requested and not displayed",
+            },
+        )
+
+    def safe_point_budget_check(self) -> dict[str, Any]:
+        scheduler: CooperativeScheduler = self.state["scheduler"]
+        process = self.state["process"]
+        blocked = False
+        try:
+            scheduler.safe_point(process.process_id, SchedulerSafePoint.AFTER_LLM_CALL)
+        except ProcessBudgetExceeded as error:
+            blocked = True
+            self.state["budget_error"] = str(error)
+        snapshot = self.state["collector"].snapshot(process.process_id)
+        self.state["snapshot"] = snapshot
+        return _show(
+            "Scheduler safe point",
+            {
+                "safe_point": SchedulerSafePoint.AFTER_LLM_CALL.value,
+                "blocked": blocked,
+                "process_state": process.state.value,
+                "usage": _usage_snapshot_payload(snapshot),
+                "agent_capability_principal": process.capability_snapshot.agent_id,
+            },
+        )
+
+    def recover_after_budget_pause(self) -> dict[str, Any]:
+        scheduler: CooperativeScheduler = self.state["scheduler"]
+        process = self.state["process"]
+        scheduler.reset_usage(process.process_id)
+        scheduler.unblock(process.process_id)
+        return _show(
+            "Budget recovery",
+            {
+                "process_id": process.process_id,
+                "state_after_unblock": process.state.value,
+                "agent_id_unchanged": process.agent_id,
+                "session_id_unchanged": process.session_id,
+            },
+        )
+
+    def summary(self) -> dict[str, Any]:
+        process = self.state["process"]
+        return _show(
+            "What this proves",
+            {
+                "claim": "Process runtime state can block without mutating Agent authority or Session truth.",
+                "agent_owns_capability": process.capability_snapshot.agent_id
+                == self.state["agent"].control.agent_id,
+                "process_state": process.state.value,
+                "session_id_unchanged": process.session_id
+                == self.state["agent"].control.session_id,
+                "not_claimed": "This is cooperative scheduling, not preemptive scheduling or IPC.",
+            },
+        )
+
+
+class V08MultiAgentBoundaryLab(InteractiveLab):
+    title = "V0.8 Multi-Agent Boundary Lab"
+    question = "两个 Agent 如何通信、授权和共享资源而不越权？"
+
+    def setup(self) -> dict[str, Any]:
+        agents = AgentRegistry()
+        parent_session = Session("session-parent")
+        child_session = Session("session-child")
+        parent = agents.create_root(
+            agent_id="agent-parent",
+            session=parent_session,
+            capability_grants=(
+                CapabilityGrant("agent-parent", TOOL_EXECUTE_ACTION, "tool://math.add"),
+                CapabilityGrant("agent-parent", RESOURCE_READ_ACTION, "artifact://**"),
+            ),
+            creation_id="create-parent",
+        )
+        child = agents.create_child(
+            parent_agent_id=parent.control.agent_id,
+            agent_id="agent-child",
+            session=child_session,
+            creation_id="create-child",
+            record_session=parent_session,
+        )
+        processes = ProcessManager(agent_registry=agents)
+        parent_process = processes.create_process(
+            process_id="process-parent",
+            agent=parent.control,
+        )
+        child_process = processes.create_child_process(
+            parent_process_id=parent_process.process_id,
+            process_id="process-child",
+            agent=child.control,
+        )
+        registry = ToolRegistry()
+        registry.register(
+            ToolDefinition(
+                schema=ToolSchema("math.add", "Add.", {"type": "object"}),
+                handler=_add,
+                required_action=TOOL_EXECUTE_ACTION,
+                required_resource="tool://math.add",
+            )
+        )
+        tmp = tempfile.TemporaryDirectory(prefix="agentkernel-lab-v08-")
+        shares = ResourceShareRegistry(agent_registry=agents, clock=lambda: 100.0)
+        resources = ResourceService(
+            LocalResourceStore(Path(tmp.name) / "resources"),
+            share_registry=shares,
+            resource_id_factory=lambda: "res_shared",
+            handle_id_factory=lambda: "hdl_shared",
+            clock=lambda: 1.0,
+        )
+        owner = ResourceOwner("agent-parent", "session-parent")
+        child_owner = ResourceOwner("agent-child", "session-child")
+        handle = resources.create_artifact(
+            b"parent artifact",
+            owner=owner,
+            media_type="text/plain",
+            encoding="utf-8",
+            source_tool_name="producer",
+            source_tool_call_id="call-producer",
+            source_operation_id="op-producer",
+        )
+        request = ModelRequest(
+            messages=(
+                Message.user(
+                    "Parent Agent wants Child Agent to add 2+3 and inspect one "
+                    "artifact reference. Explain what Kernel permissions are needed."
+                ),
+            ),
+            tools=registry.model_schemas(child.control),
+            system_prompt=(
+                "You are an AgentKernel V0.8 lab assistant. Observe the multi-agent "
+                "boundary; do not assume messages or resource references grant authority."
+            ),
+        )
+        llm = self._model(
+            [
+                ModelResponse(
+                    content=(
+                        "The child needs delegated tool capability and an explicit "
+                        "resource share; IPC alone is only delivery."
+                    )
+                )
+            ]
+        )
+        self.state.update(
+            {
+                "tmp": tmp,
+                "agents": agents,
+                "parent_session": parent_session,
+                "child_session": child_session,
+                "parent": parent,
+                "child": child,
+                "processes": processes,
+                "parent_process": parent_process,
+                "child_process": child_process,
+                "registry": registry,
+                "shares": shares,
+                "resources": resources,
+                "owner": owner,
+                "child_owner": child_owner,
+                "handle": handle,
+                "request": request,
+                "llm": llm,
+            }
+        )
+        return _show(
+            "Setup",
+            {
+                "mode": self.mode,
+                "decision_boundary": self.decision_label,
+                "agent_lineage": agents.lineage("agent-child"),
+                "process_lineage": processes.lineage("process-child"),
+                "child_visible_tools_before_delegation": len(request.tools),
+                "resource_handle": handle.as_dict(),
+            },
+        )
+
+    def show_model_request(self) -> dict[str, Any]:
+        return _show("Model-visible request", _request_payload(self.state["request"]))
+
+    def model_step(self) -> dict[str, Any]:
+        response = _run(self.state["llm"].generate(self.state["request"]))
+        self.state["response"] = response
+        return _show(
+            "Observable model response",
+            {
+                "provider_metadata": self._llm_metadata(),
+                "response": _response_payload(response),
+                "hidden_chain_of_thought": "not requested and not displayed",
+            },
+        )
+
+    def child_before_delegation(self) -> dict[str, Any]:
+        result = _run(
+            self.state["registry"].execute(
+                ToolCall("call-add-before", "math.add", {"left": 2, "right": 3}),
+                self.state["child"].control,
+            )
+        )
+        self.state["before_delegation"] = result
+        return _show(
+            "Child before delegation",
+            {
+                "tool_call": "math.add(2, 3)",
+                "result": result.as_dict(),
+                "reason": "The child Agent has not received narrowed authority yet.",
+            },
+        )
+
+    def delegate_and_execute(self) -> dict[str, Any]:
+        decision = self.state["agents"].delegate_capability(
+            request=DelegateCapabilityRequest(
+                "agent-parent",
+                "agent-child",
+                TOOL_EXECUTE_ACTION,
+                "tool://math.add",
+                correlation_id="delegate-tool",
+            ),
+            record_session=self.state["child_session"],
+        )
+        result = _run(
+            self.state["registry"].execute(
+                ToolCall("call-add-after", "math.add", {"left": 2, "right": 3}),
+                self.state["agents"].get("agent-child"),
+            )
+        )
+        self.state.update({"delegation_decision": decision, "after_delegation": result})
+        return _show(
+            "Capability delegation",
+            {
+                "delegation_allowed": decision.allowed,
+                "delegation_reason": decision.reason,
+                "child_after_delegation": result.as_dict(),
+            },
+        )
+
+    def ipc_resource_reference(self) -> dict[str, Any]:
+        ipc = KernelIPC(
+            agent_registry=self.state["agents"],
+            process_manager=self.state["processes"],
+            sessions={
+                "agent-parent": self.state["parent_session"],
+                "agent-child": self.state["child_session"],
+            },
+            persistence=InMemoryIPCPersistence(),
+            time_fn=lambda: 1.0,
+        )
+        ipc.create_channel(
+            channel_id="channel-parent-child",
+            sender_agent_id="agent-parent",
+            receiver_agent_id="agent-child",
+            receiver_process_id=self.state["child_process"].process_id,
+        )
+        ipc.send(
+            channel_id="channel-parent-child",
+            sender_process_id=self.state["parent_process"].process_id,
+            payload={"body": "inspect this artifact"},
+            resource_refs=(self.state["handle"].uri,),
+            message_id="message-1",
+            correlation_id="corr-1",
+        )
+        delivered = ipc.receive(
+            channel_id="channel-parent-child",
+            receiver_agent_id="agent-child",
+            receiver_process_id=self.state["child_process"].process_id,
+        )
+        denied = False
+        try:
+            self.state["resources"].read(
+                self.state["handle"].uri,
+                owner=self.state["child_owner"],
+                capability_evaluator=CapabilityEvaluator(
+                    (
+                        CapabilityGrant(
+                            "agent-child",
+                            RESOURCE_READ_ACTION,
+                            self.state["handle"].uri,
+                        ),
+                    )
+                ),
+            )
+        except ResourceAccessDenied:
+            denied = True
+        self.state.update({"ipc": ipc, "delivered": delivered, "read_before_share_denied": denied})
+        return _show(
+            "IPC reference is not permission",
+            {
+                "delivered_resource_ref": delivered.resource_refs[0] if delivered else None,
+                "child_has_uri": bool(delivered and delivered.resource_refs),
+                "read_before_share_denied": denied,
+            },
+        )
+
+    def share_and_read(self) -> dict[str, Any]:
+        share = self.state["resources"].share(
+            self.state["handle"].uri,
+            owner=self.state["owner"],
+            grantee_agent_id="agent-child",
+            allowed_actions=(RESOURCE_READ_ACTION,),
+            record_session=self.state["parent_session"],
+            share_id="share_1",
+            correlation_id="corr-share",
+        )
+        read = self.state["resources"].read(
+            self.state["handle"].uri,
+            owner=self.state["child_owner"],
+            capability_evaluator=CapabilityEvaluator(
+                (
+                    CapabilityGrant(
+                        "agent-child",
+                        RESOURCE_READ_ACTION,
+                        self.state["handle"].uri,
+                    ),
+                )
+            ),
+        )
+        self.state.update({"share": share, "shared_read": read})
+        return _show(
+            "Explicit resource share",
+            {
+                "share_allowed": share.allowed,
+                "child_read_after_share": read.data.decode("utf-8", errors="replace"),
+            },
+        )
+
+    def summary(self) -> dict[str, Any]:
+        return _show(
+            "What this proves",
+            {
+                "claim": "Multi-agent runtime separates identity, delivery, authority, and sharing.",
+                "agent_process_identity_separate": self.state["agents"].lineage("agent-child")
+                != self.state["processes"].lineage("process-child"),
+                "child_cannot_use_tool_before_delegation": self.state[
+                    "before_delegation"
+                ].error
+                is not None,
+                "delegation_enables_narrow_tool_use": self.state["after_delegation"].ok,
+                "ipc_reference_is_not_permission": self.state["read_before_share_denied"],
+                "explicit_share_required": self.state["share"].allowed,
+                "not_claimed": "This does not implement revocation, namespace, RBAC, IAM, or memory.",
+            },
+        )
 
 
 def _v01_execution_spine() -> LabPayload:

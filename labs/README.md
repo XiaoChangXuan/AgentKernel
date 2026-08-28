@@ -29,7 +29,7 @@ AgentKernel 现在有三层验证：
 jupyter lab labs
 ```
 
-V0.1-V0.3 notebook 会自动把 AgentKernel 仓库根目录加入 Python import path，
+V0.1-V0.8 notebook 会自动把 AgentKernel 仓库根目录加入 Python import path，
 所以从仓库根目录或 `labs/` 目录打开都可以导入 `from labs import create_lab`。
 
 如果只想在命令行看一个 lab：
@@ -56,7 +56,7 @@ Kernel execution = REAL
 也就是说，模型决策由固定脚本提供，但 ToolRegistry、Session、Recovery、
 Capability、Resource、Process 等 AgentKernel 执行路径仍然是真实代码。
 
-如果把 `MODE` 改成 `"real_model"`，V0.1-V0.3 flagship notebooks 会真正调用
+如果把 `MODE` 改成 `"real_model"`，V0.1-V0.8 flagship notebooks 会真正调用
 OpenAI-compatible Lab LLM adapter。真实模型运行用于 demo，不作为 deterministic CI
 oracle，也不会展示 hidden chain-of-thought。
 
@@ -96,7 +96,7 @@ Kernel execution = REAL
 
 ## Flagship interactive labs
 
-V0.1-V0.3 已经重构成逐格运行的 stateful experiment controller：
+V0.1-V0.8 都是逐格运行的 stateful experiment controller：
 
 ```python
 from labs import create_lab
@@ -116,7 +116,13 @@ lab.summary()
 ```
 
 这些 notebook 不再是一个 cell 调 `run_lab()` 执行完整实验，而是在关键 Kernel
-boundary 停下来让你观察状态。
+boundary 停下来让你观察状态。V0.4-V0.8 也遵循同一模式：
+
+- V0.4：先看 durable Session truth，再看 Context VM 选择出来的 bounded working set。
+- V0.5：先制造大输出，再外置到 ResourceService，并分别演示授权/未授权读取。
+- V0.6：先看未授权模型可见工具为空，再强行提交 ToolCall，观察 Kernel 拒绝。
+- V0.7：先调度 Process，再在 safe point 因预算阻塞，并恢复到 READY。
+- V0.8：先演示 Child Agent 无权限，再演示 delegation、IPC 引用和显式 share。
 
 ## Lab 输出原则
 

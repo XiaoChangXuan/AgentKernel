@@ -159,3 +159,180 @@ def test_v03_real_model_invalid_patch_is_observable(monkeypatch):
 
     assert payload["accepted_apply_patch_tool_call"] is False
     assert payload["patch_parse_error"]["code"] == "invalid_patch"
+
+
+@pytest.mark.parametrize(
+    ("lab_id", "methods"),
+    (
+        (
+            "v04",
+            (
+                "setup",
+                "show_session_truth",
+                "build_working_set",
+                "show_model_request",
+                "model_step",
+                "summary",
+            ),
+        ),
+        (
+            "v05",
+            (
+                "setup",
+                "show_large_output",
+                "externalize_output",
+                "show_model_request",
+                "model_step",
+                "authorized_read",
+                "unauthorized_read",
+                "summary",
+            ),
+        ),
+        (
+            "v06",
+            (
+                "setup",
+                "show_model_request",
+                "model_step",
+                "forced_unauthorized_execution",
+                "authorized_comparison",
+                "summary",
+            ),
+        ),
+        (
+            "v07",
+            (
+                "setup",
+                "dispatch",
+                "show_model_request",
+                "model_step",
+                "safe_point_budget_check",
+                "recover_after_budget_pause",
+                "summary",
+            ),
+        ),
+        (
+            "v08",
+            (
+                "setup",
+                "show_model_request",
+                "model_step",
+                "child_before_delegation",
+                "delegate_and_execute",
+                "ipc_resource_reference",
+                "share_and_read",
+                "summary",
+            ),
+        ),
+    ),
+)
+def test_v04_to_v08_interactive_labs_run_deterministically(lab_id, methods):
+    lab = create_lab(lab_id, mode="deterministic")
+    try:
+        results = [getattr(lab, method)() for method in methods]
+    finally:
+        lab.close()
+
+    assert results[-1]["claim"]
+
+
+@pytest.mark.parametrize(
+    ("lab_id", "methods"),
+    (
+        (
+            "v04",
+            (
+                "setup",
+                "show_session_truth",
+                "build_working_set",
+                "show_model_request",
+                "model_step",
+                "summary",
+            ),
+        ),
+        (
+            "v05",
+            (
+                "setup",
+                "show_large_output",
+                "externalize_output",
+                "show_model_request",
+                "model_step",
+                "authorized_read",
+                "unauthorized_read",
+                "summary",
+            ),
+        ),
+        (
+            "v06",
+            (
+                "setup",
+                "show_model_request",
+                "model_step",
+                "forced_unauthorized_execution",
+                "authorized_comparison",
+                "summary",
+            ),
+        ),
+        (
+            "v07",
+            (
+                "setup",
+                "dispatch",
+                "show_model_request",
+                "model_step",
+                "safe_point_budget_check",
+                "recover_after_budget_pause",
+                "summary",
+            ),
+        ),
+        (
+            "v08",
+            (
+                "setup",
+                "show_model_request",
+                "model_step",
+                "child_before_delegation",
+                "delegate_and_execute",
+                "ipc_resource_reference",
+                "share_and_read",
+                "summary",
+            ),
+        ),
+    ),
+)
+def test_v04_to_v08_real_model_path_is_observable_without_network(
+    lab_id,
+    methods,
+    monkeypatch,
+):
+    class FakeLabLLM:
+        @property
+        def metadata(self):
+            return {
+                "provider": "openai-compatible",
+                "model": "fake-real-model",
+                "config_source": "test",
+                "api_key_configured": True,
+            }
+
+        async def generate(self, request):
+            return ModelResponse(
+                content=(
+                    "This fake provider response proves the real_model path records "
+                    "provider metadata without depending on external network in tests."
+                )
+            )
+
+    monkeypatch.setattr("labs.kernel_labs.LabOpenAICompatibleLLM", FakeLabLLM)
+    lab = create_lab(lab_id, mode="real_model")
+    try:
+        results = [getattr(lab, method)() for method in methods]
+    finally:
+        lab.close()
+
+    model_step_payloads = [
+        payload for payload in results if payload.get("provider_metadata", {}).get("model")
+    ]
+    assert model_step_payloads
+    assert model_step_payloads[0]["provider_metadata"]["model"] == "fake-real-model"
