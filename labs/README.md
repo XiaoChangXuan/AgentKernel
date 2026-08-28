@@ -43,9 +43,58 @@ python -c "from labs import run_lab, render_lab; render_lab(run_lab('v03'))"
 MODE = "deterministic"
 ```
 
-这条路径离线、可重复、适合教学和 CI。它使用 `ScriptedLLM` 或固定 fixture，但真实调用 AgentKernel/MiniCode 的 Kernel API。
+这条路径离线、可重复、适合教学和 CI。它的语义是：
 
-如果把 `MODE` 改成 `"real_model"`，Notebook 会给出对应的真实模型 prompt 和 MiniCode 命令。真实模型运行用于 demo，不作为 deterministic CI oracle，也不会展示 hidden chain-of-thought。
+```text
+Model decision = SCRIPTED
+Kernel execution = REAL
+```
+
+也就是说，模型决策由固定脚本提供，但 ToolRegistry、Session、Recovery、
+Capability、Resource、Process 等 AgentKernel 执行路径仍然是真实代码。
+
+如果把 `MODE` 改成 `"real_model"`，V0.1-V0.3 flagship notebooks 会真正调用
+OpenAI-compatible Lab LLM adapter。真实模型运行用于 demo，不作为 deterministic CI
+oracle，也不会展示 hidden chain-of-thought。
+
+真实模型配置使用：
+
+```powershell
+$env:AGENTKERNEL_LAB_LLM_BASE_URL="https://..."
+$env:AGENTKERNEL_LAB_LLM_MODEL="..."
+$env:AGENTKERNEL_LAB_LLM_API_KEY="..."
+```
+
+真实模式只有在 provider 请求成功时，才表示：
+
+```text
+Model decision = REAL OpenAI-compatible
+Kernel execution = REAL
+```
+
+## Flagship interactive labs
+
+V0.1-V0.3 已经重构成逐格运行的 stateful experiment controller：
+
+```python
+from labs import create_lab
+
+lab = create_lab("v03", mode=MODE)
+lab.setup()
+lab.show_initial_state()
+lab.model_step()
+lab.prepare()
+lab.dispatch()
+lab.apply_effect()
+lab.crash()
+lab.restart()
+lab.analyze()
+lab.reconcile()
+lab.summary()
+```
+
+这些 notebook 不再是一个 cell 调 `run_lab()` 执行完整实验，而是在关键 Kernel
+boundary 停下来让你观察状态。
 
 ## Lab 输出原则
 
